@@ -48,3 +48,35 @@ export function analyzeHold(samples: HoldSample[]): HoldAnalysis | null {
     coefficientOfVariation,
   };
 }
+
+/**
+ * Named distinctly from analyzeHold()/compute_calibration_value() on
+ * purpose, so the two extraction methods are never accidentally conflated
+ * or swapped: a true maximal contraction can't be sustained the way a
+ * submax hold can. High-threshold motor units start dropping out within a
+ * couple of seconds, so force decays almost immediately after the initial
+ * peak -- there's no steady plateau to take a percentile over. The whole
+ * capture is ~4-5s: ~1s ramp-up, ~2-3s of genuine max effort, ~1s release.
+ * Both ends are trimmed away (not just the start) and the single highest
+ * envelope value within what's left is taken -- the true peak could land
+ * anywhere in that 2-3s window, so no percentile or averaging is applied
+ * to it either. Null if there isn't enough data left after trimming to
+ * trust the result.
+ */
+export function extractMaxEffortValue(
+  samples: HoldSample[],
+  rampTrimS: number = 1.0,
+  releaseTrimS: number = 1.0,
+): number | null {
+  if (samples.length === 0) {
+    return null;
+  }
+  const totalDuration = samples[samples.length - 1].elapsedSec;
+  const effortWindow = samples.filter(
+    s => s.elapsedSec >= rampTrimS && s.elapsedSec <= totalDuration - releaseTrimS,
+  );
+  if (effortWindow.length < 5) {
+    return null;
+  }
+  return Math.max(...effortWindow.map(s => s.envelope));
+}

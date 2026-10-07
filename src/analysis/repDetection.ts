@@ -19,6 +19,7 @@ import {
   rollingMean,
 } from './dsp';
 import { findPeaks, peakProminence } from './peakDetection';
+import { selectDominantGyroAxis } from './imuAxis';
 import {
   ACF_MAX_PERIOD_S,
   ACF_MIN_PERIOD_S,
@@ -103,24 +104,13 @@ export function computeGyroEnergy(rows: SensorRow[]): GyroEnergyTrack | null {
     return null;
   }
 
-  const gx = imuRows.map(r => r.gxDps);
-  const gy = imuRows.map(r => r.gyDps);
-  const gz = imuRows.map(r => r.gzDps);
-  const variance = (arr: number[]) => {
-    const m = arr.reduce((a, b) => a + b, 0) / arr.length;
-    return arr.reduce((a, b) => a + (b - m) * (b - m), 0) / arr.length;
-  };
-  const vx = variance(gx);
-  const vy = variance(gy);
-  const vz = variance(gz);
-  let dominant: number[];
-  if (vy >= vx && vy >= vz) {
-    dominant = gy;
-  } else if (vz >= vx) {
-    dominant = gz;
-  } else {
-    dominant = gx;
-  }
+  const axis = selectDominantGyroAxis(imuRows);
+  const dominant =
+    axis === 'gy'
+      ? imuRows.map(r => r.gyDps)
+      : axis === 'gz'
+        ? imuRows.map(r => r.gzDps)
+        : imuRows.map(r => r.gxDps);
 
   const timesSec = imuRows.map(r => r.timeSec);
   const diffs: number[] = [];

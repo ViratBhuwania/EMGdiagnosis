@@ -5,16 +5,16 @@
  * percentile-based `session_peak` -- see analyzeSession.ts for why.
  */
 import type { SensorRow } from '../types';
-import { linregress, medianFrequency, trapezoidalIntegral } from './dsp';
+import { linregress, medianFrequency, percentile, trapezoidalIntegral } from './dsp';
 import type { DetectedRep, RepFeatures, SetFatigue } from './types';
 
-/** Per-rep features for every detected rep, activation % relative to `sessionBestPeak`. */
+/** Per-rep features for every detected rep, activation % relative to `activationCeiling`. */
 export function extractRepFeatures(
   rows: SensorRow[],
   detectedReps: DetectedRep[],
   noiseFloor: number,
   sampleRate: number,
-  sessionBestPeak: number,
+  activationCeiling: number,
 ): RepFeatures[] {
   const envelope = rows.map(r => r.envelope);
   const raw = rows.map(r => r.signal);
@@ -34,7 +34,7 @@ export function extractRepFeatures(
       seg.map(v => Math.max(v - noiseFloor, 0)),
       1 / sampleRate,
     );
-    const activationPct = sessionBestPeak > 0 ? (peakRaw / sessionBestPeak) * 100 : 0;
+    const activationPct = activationCeiling > 0 ? (peakRaw / activationCeiling) * 100 : 0;
 
     const half = 0.5 * peakRaw;
     let pkL = 0;
@@ -126,6 +126,8 @@ export function extractSetFatigue(repFeatures: RepFeatures[]): SetFatigue[] {
     const meanActivationPct = sub.reduce((a, r) => a + r.activationPct, 0) / n;
     const meanArea = sub.reduce((a, r) => a + r.area, 0) / n;
     const meanDurationSec = sub.reduce((a, r) => a + r.durationSec, 0) / n;
+    const peakEnvelope = Math.max(...sub.map(r => r.peakRaw));
+    const p90Peak = percentile(sub.map(r => r.peakRaw), 90);
 
     let fatigueSlopeArea: number | null = null;
     let fatigueSlopeAreaR2: number | null = null;
@@ -172,6 +174,8 @@ export function extractSetFatigue(repFeatures: RepFeatures[]): SetFatigue[] {
       lastActivationPct: sub[n - 1].activationPct,
       meanArea,
       meanDurationSec,
+      peakEnvelope,
+      p90Peak,
       fatigueSlopeArea,
       fatigueSlopeAreaR2,
       fatigueSlopeMdf,

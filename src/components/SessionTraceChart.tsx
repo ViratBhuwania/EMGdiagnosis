@@ -48,7 +48,7 @@ function downsample(times: number[], values: number[], targetPoints: number) {
  * from props (no live updates), so none of LiveChart's imperative-ref/RAF
  * machinery is needed here.
  */
-export default function SessionTraceChart({
+function SessionTraceChart({
   title,
   timesSec,
   values,
@@ -130,6 +130,15 @@ export default function SessionTraceChart({
     </View>
   );
 }
+
+/**
+ * Memoized so an unrelated ancestor re-render (e.g. LiveSessionScreen's
+ * ~5Hz stats-bar tick while recording) doesn't re-render this Skia canvas
+ * when its own props (all sourced from one stable `analysis` object)
+ * haven't actually changed -- every prop here is a plain value/array, so
+ * the default shallow comparison is sufficient.
+ */
+export default React.memo(SessionTraceChart);
 
 const styles = StyleSheet.create({
   container: {

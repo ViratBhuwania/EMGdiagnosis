@@ -23,6 +23,8 @@ import {
   preprocessEmg,
 } from './repDetection';
 import { extractRepFeatures, extractSetFatigue } from './featureExtraction';
+import { computeFusedAngle } from './sensorFusion';
+import { computeActivationCeiling } from '../calibration/activationCeiling';
 
 export type AnalysisFailureReason = 'no_sets_detected' | 'no_reps_detected' | 'too_few_samples';
 
@@ -48,13 +50,19 @@ function computeRepPeak(rows: SensorRow[], rep: DetectedRep): number {
 
 /**
  * Runs the full detection + feature-extraction pipeline over one completed
- * session. `calibrationReference`, if available, enables the low-activation
- * sanity check (see `lowActivationWarning` on the result) -- it plays no
- * part in the session-local activation % itself.
+ * session. `calibrationReference` (the submax-hold value, UNCHANGED) only
+ * enables the low-activation sanity check (see `lowActivationWarning`) --
+ * it plays no part in activationPct. `maxEffortReference` and
+ * `rollingHistoricalPeak` are the other two inputs to the unified
+ * activation ceiling (see activationCeiling.ts) that activationPct IS
+ * computed against; both default to null (cold start), which max()
+ * naturally handles without a separate code path.
  */
 export function analyzeSession(
   rows: SensorRow[],
   calibrationReference: number | null = null,
+  maxEffortReference: number | null = null,
+  rollingHistoricalPeak: number | null = null,
 ): AnalysisResult {
   if (rows.length < 100) {
     return { ok: false, reason: 'too_few_samples' };
@@ -66,6 +74,7 @@ export function analyzeSession(
 
   const { smoothDet, noiseFloor, sigRangeForThresholds } = preprocessEmg(rawEnvelope, sampleRateHz);
   const gyroTrack = computeGyroEnergy(rows);
+  const fusedAngle = computeFusedAngle(rows);
 
   const { boundaries } = detectSets(smoothDet, noiseFloor, sigRangeForThresholds, sampleRateHz);
   const setSpansSec: [number, number][] = boundaries.map(b => [
@@ -90,12 +99,17 @@ export function analyzeSession(
   }
 
   const sessionBestPeak = Math.max(...detectedReps.map(rep => computeRepPeak(rows, rep)));
+  const activationCeiling = computeActivationCeiling({
+    maxEffortReference,
+    rollingHistoricalPeak,
+    currentSessionPeak: sessionBestPeak,
+  });
   const reps: RepFeatures[] = extractRepFeatures(
     rows,
     detectedReps,
     noiseFloor,
     sampleRateHz,
-    sessionBestPeak,
+    activationCeiling,
   );
   const sets = extractSetFatigue(reps);
 
@@ -111,10 +125,14 @@ export function analyzeSession(
       sets,
       reps,
       sessionBestPeak,
+      activationCeiling,
+      maxEffortReferenceUsed: maxEffortReference,
+      rollingHistoricalPeakUsed: rollingHistoricalPeak,
       lowActivationWarning,
       smoothDet,
       timesSec,
       setSpansSec,
+      fusedAngle,
     },
   };
 }

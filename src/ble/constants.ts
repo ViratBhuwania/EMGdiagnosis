@@ -13,8 +13,11 @@ export const SERVICE_UUID = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
 /** Notify characteristic: ESP32 -> phone, one CSV row per notification. */
 export const TX_CHARACTERISTIC_UUID = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
 
-/** Write characteristic: phone -> ESP32. Not used by this app. */
-export const RX_CHARACTERISTIC_UUID = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
+/*
+ * The firmware still registers a raw-dump characteristic (...0004) and an RX
+ * write characteristic (...0002), but the app no longer uses either: per-set
+ * summaries arrive as text lines on the live characteristic above.
+ */
 
 /** Accelerometer raw-count -> g conversion, for a +/-2g range. */
 export const ACCEL_SCALE = 16384.0;

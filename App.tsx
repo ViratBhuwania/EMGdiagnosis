@@ -12,6 +12,7 @@ import { useBleDevice } from './src/hooks/useBleDevice';
 import ScanScreen from './src/screens/ScanScreen';
 import LiveSessionScreen from './src/screens/LiveSessionScreen';
 import CalibrationScreen from './src/screens/CalibrationScreen';
+import MaxEffortTestScreen from './src/screens/MaxEffortTestScreen';
 import ProfileGateScreen from './src/screens/ProfileGateScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import { createProfile, loadProfileState, setActiveProfile } from './src/profile/profileStore';
@@ -49,6 +50,7 @@ async function migrateLegacyDataIfNeeded(newProfileId: string): Promise<void> {
 function App() {
   const ble = useBleDevice();
   const [calibrating, setCalibrating] = useState(false);
+  const [testingMaxEffort, setTestingMaxEffort] = useState(false);
   const [profileState, setProfileState] = useState<ProfileState | null>(null);
   const [showProfileSwitcher, setShowProfileSwitcher] = useState(false);
 
@@ -85,6 +87,7 @@ function App() {
 
   const handleLeave = useCallback(() => {
     setCalibrating(false);
+    setTestingMaxEffort(false);
     void ble.disconnect();
   }, [ble]);
 
@@ -128,6 +131,14 @@ function App() {
         onDone={() => setCalibrating(false)}
       />
     );
+  } else if (showLiveSession && testingMaxEffort) {
+    content = (
+      <MaxEffortTestScreen
+        ble={ble}
+        profileId={activeProfile.id}
+        onDone={() => setTestingMaxEffort(false)}
+      />
+    );
   } else if (showLiveSession) {
     content = (
       <LiveSessionScreen
@@ -135,6 +146,7 @@ function App() {
         profileId={activeProfile.id}
         onLeave={handleLeave}
         onStartCalibration={() => setCalibrating(true)}
+        onStartMaxEffortTest={() => setTestingMaxEffort(true)}
       />
     );
   } else {

@@ -10,6 +10,8 @@ interface SessionAnalysisPanelProps {
   fallbackSummary: ActivationSummary | null;
   /** Opens the full trace/bar-chart detail view. Omit to hide the button entirely. */
   onViewDetails?: () => void;
+  /** Opens the whole-workout set-to-set comparison view. Omit to hide the button entirely. */
+  onViewWorkoutSummary?: () => void;
   /** 'pending' shows the Save/Discard choice; omit entirely to hide it (e.g. while still analyzing). */
   historyDecision?: 'pending' | 'saved' | 'discarded';
   onSaveToHistory?: () => void;
@@ -40,15 +42,15 @@ export default function SessionAnalysisPanel({
   result,
   fallbackSummary,
   onViewDetails,
+  onViewWorkoutSummary,
   historyDecision,
   onSaveToHistory,
   onDiscardFromHistory,
   setLabels = {},
   onLabelChange,
-  exerciseTag = '',
-  onExerciseTagChange,
-  description = '',
-  onDescriptionChange,
+  // exerciseTag/onExerciseTagChange/description/onDescriptionChange are
+  // unused while the tag/notes entry below is commented out -- left in
+  // SessionAnalysisPanelProps so re-enabling is a one-line uncomment.
 }: SessionAnalysisPanelProps) {
   if (status === 'analyzing') {
     return (
@@ -96,6 +98,11 @@ export default function SessionAnalysisPanel({
         Total reps: {totalReps} across {sets.length} set{sets.length === 1 ? '' : 's'}
       </Text>
 
+      {/* Exercise tag / notes entry disabled while only biceps curl is being
+          tracked -- every session falls into the same untagged bucket,
+          which the calibration ceiling/retest-trigger logic already treats
+          correctly as "the one exercise." Re-enable by uncommenting once
+          more than one exercise is being tracked.
       {onExerciseTagChange && (
         <TextInput
           style={styles.tagInput}
@@ -115,6 +122,7 @@ export default function SessionAnalysisPanel({
           multiline
         />
       )}
+      */}
 
       <Text style={styles.fatigueMethodNote}>
         Fatigue is estimated from amplitude trend — your device's BLE data rate is too low for
@@ -132,7 +140,11 @@ export default function SessionAnalysisPanel({
                   !set.fatigueDetected && styles.fatigueBadgeTextNeutral,
                 ]}
               >
-                {set.fatigueDetected
+                {set.fatigueAssessment === 'no-summary'
+                  ? 'Fatigue: not assessed yet'
+                  : set.fatigueAssessment === 'too-short'
+                    ? 'Fatigue: set too short to judge'
+                    : set.fatigueDetected
                   ? /* Testing-only: rep number included for validating the
                        detection algorithm. The shipped UI should drop the
                        rep number -- see fatigueStartRep's doc comment. */
@@ -180,6 +192,11 @@ export default function SessionAnalysisPanel({
       {onViewDetails && (
         <Pressable style={styles.detailsButton} onPress={onViewDetails}>
           <Text style={styles.detailsButtonLabel}>View Full Summary &amp; Charts</Text>
+        </Pressable>
+      )}
+      {onViewWorkoutSummary && (
+        <Pressable style={styles.detailsButton} onPress={onViewWorkoutSummary}>
+          <Text style={styles.detailsButtonLabel}>View Workout Summary</Text>
         </Pressable>
       )}
     </View>

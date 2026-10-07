@@ -39,6 +39,11 @@ export interface UseSessionRecorderResult {
   /** Read the full recorded rows + reps, e.g. for export. */
   getSnapshot: () => SessionSnapshot;
   /**
+   * Precise elapsed seconds right now (unlike `elapsedSec`, which only
+   * updates every STATS_TICK_MS).
+   */
+  nowElapsedSec: () => number;
+  /**
    * Per-rep activation relative to this session's best rep, plus the average
    * as both a raw percentage and a rounded 1-10 (RPE-style) score. Null if no
    * rep was ever completed (no Mark Rep press, or session still recording).
@@ -223,6 +228,8 @@ export function useSessionRecorder(): UseSessionRecorderResult {
     return { rows: rowsRef.current, reps: repsRef.current };
   }, []);
 
+  const nowElapsedSec = useCallback((): number => currentElapsedSec(), [currentElapsedSec]);
+
   const getActivationSummary = useCallback((): ActivationSummary | null => {
     const peaks = repPeaksRef.current;
     if (peaks.length === 0) {
@@ -258,5 +265,6 @@ export function useSessionRecorder(): UseSessionRecorderResult {
     reset,
     getSnapshot,
     getActivationSummary,
+    nowElapsedSec,
   };
 }

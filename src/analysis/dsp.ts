@@ -316,6 +316,11 @@ export function median(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+export function variance(values: number[]): number {
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  return values.reduce((a, b) => a + (b - mean) * (b - mean), 0) / values.length;
+}
+
 export function percentile(values: number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   const idx = (p / 100) * (sorted.length - 1);

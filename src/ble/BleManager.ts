@@ -73,9 +73,10 @@ function base64ToAscii(base64: string): string {
 }
 
 /**
- * Thin wrapper around react-native-ble-plx scoped to this app's single-service,
- * single-characteristic use case: scan for the ESP32, connect, and subscribe to
- * its notify characteristic.
+ * Thin wrapper around react-native-ble-plx scoped to this app's single-service
+ * use case: scan for the ESP32, connect, and subscribe to its notify
+ * characteristic -- the live CSV stream (subscribeToRows), which also carries
+ * the per-set summary text lines.
  */
 class EmgBleManager {
   private manager = new BlePlxManager();

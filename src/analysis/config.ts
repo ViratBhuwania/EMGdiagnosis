@@ -36,3 +36,23 @@ export const GYRO_WINDOW_S = 0.4;
 export const GYRO_CONFIRM_FRAC = 0.25;
 /** Nominal IMU rate, used only as a fallback if the real rate can't be measured. */
 export const IMU_RATE_FALLBACK = 100;
+
+/**
+ * Complementary filter blend weight for the gyro/accel angle fusion: how
+ * much of each new angle estimate comes from integrating the gyro (vs.
+ * snapping to the accelerometer's drift-free-but-noisy angle). Close to 1
+ * so short-term motion is gyro-driven and responsive, but not exactly 1 so
+ * accelerometer correction keeps leaking in and bounding long-term drift.
+ * A starting value -- tune against real recorded sessions once the debug
+ * overlay chart shows how it behaves.
+ */
+export const COMPLEMENTARY_FILTER_ALPHA = 0.98;
+
+/**
+ * If the gap between two consecutive fresh IMU rows exceeds this many
+ * seconds (a BLE stall/reconnect), the fusion filter re-seeds from the
+ * accelerometer instead of integrating the gyro across the gap -- a single
+ * huge dt would otherwise inject one wildly wrong angle estimate that the
+ * filter's normal (1-alpha) correction is far too slow to recover from.
+ */
+export const MAX_FUSION_GAP_S = 0.5;

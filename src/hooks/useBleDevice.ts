@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BleError } from 'react-native-ble-plx';
 import { bleManager } from '../ble/BleManager';
 import { parseSensorRow } from '../ble/parser';
+import { SUMMARY_LINE_PREFIX, SummaryDeduper, parseSetSummaryLine } from '../ble/summaryLine';
+import type { SetSummaryData } from '../ble/setSummary';
 import { RECONNECT_TIMEOUT_MS, SCAN_TIMEOUT_MS } from '../ble/constants';
 import type {
   BleConnectionState,
@@ -11,6 +13,7 @@ import type {
 } from '../types';
 
 export type SampleListener = (sample: ParsedSample) => void;
+export type SummaryListener = (summary: SetSummaryData) => void;
 
 export interface UseBleDeviceResult {
   connectionState: BleConnectionState;
@@ -27,6 +30,8 @@ export interface UseBleDeviceResult {
   resumeAfterDrop: () => Promise<void>;
   /** Register a listener invoked with every freshly-parsed sample. Returns an unsubscribe fn. */
   subscribeToSamples: (listener: SampleListener) => () => void;
+  /** Register a listener invoked with each per-set MDF/ZCR summary the firmware sends on the live channel. Returns an unsubscribe fn. */
+  subscribeToSummaries: (listener: SummaryListener) => () => void;
 }
 
 /**
@@ -49,6 +54,8 @@ export function useBleDevice(): UseBleDeviceResult {
   const [lastError, setLastError] = useState<string | null>(null);
 
   const listenersRef = useRef<Set<SampleListener>>(new Set());
+  const summaryListenersRef = useRef<Set<SummaryListener>>(new Set());
+  const summaryDeduperRef = useRef(new SummaryDeduper());
   const lastDeviceIdRef = useRef<string | null>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -63,6 +70,25 @@ export function useBleDevice(): UseBleDeviceResult {
   const beginNotifications = useCallback(() => {
     bleManager.subscribeToRows(
       csv => {
+        // The firmware sends each set's MDF/ZCR summary as a text line on
+        // this same characteristic, in place of a normal row -- see
+        // ble/summaryLine.ts. Handle it before the CSV row parser, which
+        // would just discard it.
+        if (csv.startsWith(SUMMARY_LINE_PREFIX)) {
+          const summary = parseSetSummaryLine(csv);
+          if (!summary) {
+            console.warn(`[summaryLine] malformed summary line: ${csv.slice(0, 100)}`);
+          } else if (summaryDeduperRef.current.accept(summary.setId, Date.now())) {
+            console.log(
+              `[summaryLine] set ${summary.setId}: ${summary.binSeconds}s bins, ` +
+                `${(summary.activeSamples / 500).toFixed(1)}s active, ` +
+                `MDF Hz [${summary.mdfHz.map(v => (v === null ? '-' : v.toFixed(1))).join(', ')}] ` +
+                `ZCR Hz [${summary.zcrHz.map(v => (v === null ? '-' : v.toFixed(1))).join(', ')}]`,
+            );
+            summaryListenersRef.current.forEach(listener => listener(summary));
+          }
+          return;
+        }
         const sample = parseSensorRow(csv);
         if (!sample) {
           return;
@@ -209,6 +235,13 @@ export function useBleDevice(): UseBleDeviceResult {
     };
   }, []);
 
+  const subscribeToSummaries = useCallback((listener: SummaryListener) => {
+    summaryListenersRef.current.add(listener);
+    return () => {
+      summaryListenersRef.current.delete(listener);
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
       bleManager.stopScan();
@@ -233,5 +266,6 @@ export function useBleDevice(): UseBleDeviceResult {
     disconnect,
     resumeAfterDrop,
     subscribeToSamples,
+    subscribeToSummaries,
   };
 }

@@ -27,6 +27,17 @@ function formatDate(timestampMs: number): string {
 }
 
 /**
+ * peakEnvelope was added to SetSummaryRecord after some sessions were
+ * already saved, so it's missing (undefined at runtime, despite the type
+ * saying `number`) on older records. Shown as "N/A" rather than crashing
+ * or showing a fabricated number -- there's no raw data left to derive it
+ * from after the fact.
+ */
+function formatPeak(value: number | undefined): string {
+  return value === undefined || Number.isNaN(value) ? 'N/A' : value.toFixed(0);
+}
+
+/**
  * The previous session with the SAME exercise tag (untagged counts as its
  * own group), searching forward from `idx` in a list already sorted most-
  * recent-first. Computed against the full history regardless of any active
@@ -218,7 +229,8 @@ export default function SessionHistoryScreen({
                               {set.label?.trim() ? set.label : `Set ${set.setNumber}`}
                             </Text>
                             <Text style={styles.setBreakdownStats}>
-                              {set.repCount} reps · {set.meanActivationPct.toFixed(0)}% ·{' '}
+                              {set.repCount} reps · {set.meanActivationPct.toFixed(0)}% · peak{' '}
+                              {formatPeak(set.peakEnvelope)} ·{' '}
                               {set.fatigueDetected ? 'fatigue reached' : 'no fatigue'}
                             </Text>
                           </View>
