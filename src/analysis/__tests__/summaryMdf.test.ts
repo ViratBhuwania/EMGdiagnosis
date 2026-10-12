@@ -28,6 +28,8 @@ function analysisWithRisingArea(): SessionAnalysis {
   const reps = [1, 2, 3, 4, 5].map(n => rep(1, n, 10 + 2 * n));
   return {
     sampleRateHz: 33,
+    setCountInfo: [],
+    dataGaps: [],
     sets: extractSetFatigue(reps),
     reps,
     sessionBestPeak: 100,

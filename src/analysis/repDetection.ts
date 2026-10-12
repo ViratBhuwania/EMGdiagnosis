@@ -37,25 +37,46 @@ import {
   MIN_REST_BETWEEN_SETS_S,
   N_SMOOTH_LEVELS,
   ONSET_THRESHOLD_K,
+  RATE_MAX_SPACING_S,
   REST_WINDOW_S,
   SET_ACTIVITY_THRESHOLD_K,
   SMOOTH_FRACTION,
   SPLIT_PROMINENCE_FRAC,
   SPLIT_SMOOTH_FRACTION,
 } from './config';
-import type { DetectedRep, GyroEnergyTrack, SetBoundary } from './types';
+import type { DetectedRep, GyroEnergyTrack, SetBoundary, SetCountInfo } from './types';
+import { findImuCycles } from './imuCycles';
+import type { ImuCycle } from './imuCycles';
+
+/**
+ * Mean rows per second from consecutive timestamp spacings, ignoring
+ * connection dropouts (spacings over RATE_MAX_SPACING_S). The MEAN, not the
+ * median: rows arrive batched several to a BLE packet, so the spacings are a
+ * mix of ~0 ms and ~40 ms, and their median (28 ms -> "35.7 Hz") badly
+ * overstates the spacing of rows that are really 20 ms apart (50 Hz).
+ */
+function meanRowRate(timesSec: number[], fallback: number): number {
+  let sum = 0;
+  let count = 0;
+  for (let i = 1; i < timesSec.length; i++) {
+    const d = timesSec[i] - timesSec[i - 1];
+    if (d >= 0 && d <= RATE_MAX_SPACING_S) {
+      sum += d;
+      count++;
+    }
+  }
+  return count > 0 && sum > 0 ? count / sum : fallback;
+}
 
 /** Effective sample rate from the session's own timestamps -- BLE throughput varies run to run. */
 export function detectSampleRate(rows: SensorRow[]): number {
   if (rows.length < 2) {
     return 50;
   }
-  const diffs: number[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    diffs.push(rows[i].timeSec - rows[i - 1].timeSec);
-  }
-  const dt = median(diffs);
-  return dt > 0 ? 1 / dt : 50;
+  return meanRowRate(
+    rows.map(r => r.timeSec),
+    50,
+  );
 }
 
 export interface PreprocessResult {
@@ -113,12 +134,7 @@ export function computeGyroEnergy(rows: SensorRow[]): GyroEnergyTrack | null {
         : imuRows.map(r => r.gxDps);
 
   const timesSec = imuRows.map(r => r.timeSec);
-  const diffs: number[] = [];
-  for (let i = 1; i < timesSec.length; i++) {
-    diffs.push(timesSec[i] - timesSec[i - 1]);
-  }
-  const dt = median(diffs);
-  const imuRate = dt > 0 ? 1 / dt : IMU_RATE_FALLBACK;
+  const imuRate = meanRowRate(timesSec, IMU_RATE_FALLBACK);
 
   const win = Math.max(3, Math.floor(GYRO_WINDOW_S * imuRate));
   const squared = dominant.map(v => v * v);
@@ -363,6 +379,14 @@ export function detectRepsAdaptive(
   sigRangeForThresholds: number,
   gyroTrack: GyroEnergyTrack | null,
   sampleRate: number,
+  /**
+   * The session's rows. When given (and the IMU is alive), a set's reps are
+   * the arm-swing cycles that contain muscle activity instead of the raw EMG
+   * peaks -- see imuCycles.ts. Omit to get the EMG-only behaviour.
+   */
+  rows: SensorRow[] | null = null,
+  /** Filled with one entry per set describing how its count was decided. */
+  countInfo: SetCountInfo[] | null = null,
 ): DetectedRep[] {
   const onsetThr = noiseFloor + ONSET_THRESHOLD_K * sigRangeForThresholds;
   let allReps: DetectedRep[] = [];
@@ -601,8 +625,96 @@ export function detectRepsAdaptive(
         allReps.push(...newReps);
       }
     }
+
+    const emgOnlyCount = allReps.filter(r => r.setNumber === setNumber).length;
+    const info: SetCountInfo = {
+      setNumber,
+      basis: 'emg-only',
+      imuAlive: false,
+      emgOnlyCount,
+      cycleCount: 0,
+      countedCycles: 0,
+      dataGapCount: 0,
+      dataGapSec: 0,
+    };
+    if (rows) {
+      const found = findImuCycles(rows, smoothDet, ss, se, sampleRate);
+      info.imuAlive = found.health.alive;
+      info.cycleCount = found.cycles.length;
+      const counted = found.cycles.filter(c => c.counted);
+      info.countedCycles = counted.length;
+      if (found.health.alive && counted.length >= 2) {
+        allReps = allReps.filter(r => r.setNumber !== setNumber);
+        allReps.push(...repsFromCycles(counted, smoothDet, onsetThr, setNumber, sampleRate));
+        info.basis = 'imu+emg';
+      }
+    }
+    if (countInfo) {
+      countInfo.push(info);
+    }
   }
 
   allReps.sort((a, b) => a.setNumber - b.setNumber || a.onsetIdx - b.onsetIdx);
   return allReps;
+}
+
+
+/**
+ * One rep per counted arm-swing. A swing's rep window runs from the midpoint
+ * to the previous swing to the midpoint to the next (half a typical swing
+ * spacing at either end), the rep's peak is the strongest EMG inside it, and
+ * onset/offset are where the EMG leaves the noise floor around that peak.
+ */
+function repsFromCycles(
+  cycles: ImuCycle[],
+  smoothDet: number[],
+  onsetThr: number,
+  setNumber: number,
+  sampleRate: number,
+): DetectedRep[] {
+  const peaks = cycles.map(c => c.peakIdx).sort((a, b) => a - b);
+  const gaps: number[] = [];
+  for (let i = 1; i < peaks.length; i++) {
+    gaps.push(peaks[i] - peaks[i - 1]);
+  }
+  const halfSpacing = Math.max(
+    Math.floor(0.5 * sampleRate),
+    Math.floor((gaps.length > 0 ? median(gaps) : 2 * sampleRate) / 2),
+  );
+  const n = smoothDet.length;
+  const reps: DetectedRep[] = [];
+  for (let i = 0; i < peaks.length; i++) {
+    const pk = peaks[i];
+    const leftLimit = i > 0 ? Math.floor((peaks[i - 1] + pk) / 2) : Math.max(0, pk - halfSpacing);
+    const rightLimit =
+      i < peaks.length - 1 ? Math.floor((pk + peaks[i + 1]) / 2) : Math.min(n, pk + halfSpacing);
+    let peakAbs = pk;
+    let best = -Infinity;
+    for (let j = Math.max(0, leftLimit); j < Math.min(n, rightLimit); j++) {
+      if (smoothDet[j] > best) {
+        best = smoothDet[j];
+        peakAbs = j;
+      }
+    }
+    let onset = Math.max(0, leftLimit);
+    for (let j = peakAbs; j > onset; j--) {
+      if (smoothDet[j] < onsetThr) {
+        onset = j;
+        break;
+      }
+    }
+    let offset = Math.min(n, rightLimit);
+    for (let j = peakAbs; j < offset; j++) {
+      if (smoothDet[j] < onsetThr) {
+        offset = j;
+        break;
+      }
+    }
+    if (offset - onset < Math.floor(0.3 * sampleRate)) {
+      onset = Math.max(0, leftLimit);
+      offset = Math.min(n, rightLimit);
+    }
+    reps.push({ setNumber, onsetIdx: onset, offsetIdx: offset, peakIdx: peakAbs, fromImuCycle: true });
+  }
+  return reps;
 }

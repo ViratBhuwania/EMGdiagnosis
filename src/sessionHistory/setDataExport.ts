@@ -29,6 +29,11 @@ export function formatSessionDataText(record: SessionSummaryRecord): string {
       `reps ${s.repCount} | duration ${num(s.durationSec, 1)}s | active ${num(s.mdfActiveSec, 1)}s | ` +
         `bin ${s.mdfBinSeconds ?? 'n/a'}s | valid bins ${s.mdfValidBins ?? 'n/a'}/${s.mdfBinsHz?.length ?? 'n/a'} | summaries joined ${s.summaryParts ?? 'n/a'}`,
     );
+    lines.push(
+      `count basis: ${s.countBasis ?? 'n/a'} | muscle-signal-only count ${s.emgOnlyRepCount ?? 'n/a'} | ` +
+        `motion sensor reading: ${s.imuAlive === undefined ? 'n/a' : s.imuAlive ? 'yes' : 'NO'} | ` +
+        `connection dropouts near set: ${s.dataGapCount ?? 'n/a'} (${num(s.dataGapSec, 1)}s missing)`,
+    );
     lines.push(`MDF Hz: [${bins(s.mdfBinsHz)}]`);
     lines.push(`ZCR Hz: [${bins(s.zcrBinsHz)}]`);
     lines.push(
@@ -37,7 +42,7 @@ export function formatSessionDataText(record: SessionSummaryRecord): string {
     );
     lines.push(
       `activation first ${num(s.firstActivationPct, 0)}% last ${num(s.lastActivationPct, 0)}% mean ${num(s.meanActivationPct, 0)}% | ` +
-        `mean rep ${num(s.meanDurationSec)}s | mean area ${num(s.meanArea, 1)} | p90 peak ${num(s.p90Peak, 1)}`,
+        `mean rep ${num(s.meanDurationSec)}s | mean area ${num(s.meanArea, 1)} | max peak ${num(s.peakEnvelope, 1)} | p90 peak ${num(s.p90Peak, 1)}`,
     );
     lines.push(
       `app verdict: ${

@@ -13,7 +13,8 @@
  * rather than being flattened to the same 100% as several others.
  */
 import type { SensorRow } from '../types';
-import type { RepFeatures, SessionAnalysis } from './types';
+import type { RepFeatures, SessionAnalysis, SetCountInfo } from './types';
+import { findDataGaps, gapsTouchingSet } from './dataGaps';
 import type { DetectedRep } from './types';
 import {
   computeGyroEnergy,
@@ -85,6 +86,7 @@ export function analyzeSession(
     return { ok: false, reason: 'no_sets_detected' };
   }
 
+  const setCountInfo: SetCountInfo[] = [];
   const detectedReps = detectRepsAdaptive(
     smoothDet,
     timesSec,
@@ -93,7 +95,18 @@ export function analyzeSession(
     sigRangeForThresholds,
     gyroTrack,
     sampleRateHz,
+    rows,
+    setCountInfo,
   );
+  const dataGaps = findDataGaps(rows);
+  for (const info of setCountInfo) {
+    const span = setSpansSec[info.setNumber - 1];
+    if (span) {
+      const touching = gapsTouchingSet(dataGaps, span[0], span[1]);
+      info.dataGapCount = touching.length;
+      info.dataGapSec = touching.reduce((acc, g) => acc + g.durationSec, 0);
+    }
+  }
   if (detectedReps.length === 0) {
     return { ok: false, reason: 'no_reps_detected' };
   }
@@ -122,6 +135,8 @@ export function analyzeSession(
     ok: true,
     analysis: {
       sampleRateHz,
+      setCountInfo,
+      dataGaps,
       sets,
       reps,
       sessionBestPeak,

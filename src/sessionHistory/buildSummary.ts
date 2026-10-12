@@ -28,6 +28,7 @@ export function buildSessionSummaryRecord(
     totalReps,
     sets: analysis.sets.map(set => {
       const setReps = analysis.reps.filter(r => r.setNumber === set.setNumber);
+      const countInfo = analysis.setCountInfo?.find(i => i.setNumber === set.setNumber);
       return {
         setNumber: set.setNumber,
         label: setLabels[set.setNumber]?.trim() || null,
@@ -60,6 +61,11 @@ export function buildSessionSummaryRecord(
         meanDurationSec: set.meanDurationSec,
         firstActivationPct: set.firstActivationPct,
         lastActivationPct: set.lastActivationPct,
+        countBasis: countInfo?.basis,
+        emgOnlyRepCount: countInfo?.emgOnlyCount,
+        imuAlive: countInfo?.imuAlive,
+        dataGapCount: countInfo?.dataGapCount,
+        dataGapSec: countInfo?.dataGapSec,
       };
     }),
     sessionBestPeak: analysis.sessionBestPeak,

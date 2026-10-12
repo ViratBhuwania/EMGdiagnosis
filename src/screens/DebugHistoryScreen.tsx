@@ -185,6 +185,15 @@ export default function DebugHistoryScreen({ visible, profileId, onClose }: Debu
                     </Text>
                   </View>
                   <Text style={styles.debugLine}>Reps: {set.repCount}</Text>
+                  {set.countBasis && (
+                    <Text style={styles.debugLine}>
+                      Counted by: {set.countBasis}
+                      {set.emgOnlyRepCount !== undefined && set.emgOnlyRepCount !== set.repCount
+                        ? ` (muscle signal alone: ${set.emgOnlyRepCount})`
+                        : ''}
+                      {set.dataGapSec ? ` · ⚠ ${set.dataGapSec.toFixed(0)}s connection dropout` : ''}
+                    </Text>
+                  )}
                   <Text style={styles.debugLine}>
                     Your label:{' '}
                     {set.userOutcome === 'failure' ? 'reached failure' : set.userOutcome === 'easy' ? 'easy' : 'not labeled'}

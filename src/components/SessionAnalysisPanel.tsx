@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { AnalysisResult } from '../analysis/analyzeSession';
+import { countWarnings } from '../analysis/countWarnings';
 import type { ActivationSummary } from '../types';
 
 interface SessionAnalysisPanelProps {
@@ -80,7 +81,7 @@ export default function SessionAnalysisPanel({
     );
   }
 
-  const { sets, lowActivationWarning } = result.analysis;
+  const { sets, lowActivationWarning, setCountInfo } = result.analysis;
   const totalReps = sets.reduce((sum, set) => sum + set.repCount, 0);
 
   return (
@@ -170,6 +171,11 @@ export default function SessionAnalysisPanel({
               {set.repCount} rep{set.repCount === 1 ? '' : 's'} · avg activation
             </Text>
           </View>
+          {countWarnings(setCountInfo?.find(i => i.setNumber === set.setNumber)).map(w => (
+            <Text key={w} style={styles.countWarning}>
+              ⚠ {w}
+            </Text>
+          ))}
         </View>
       ))}
       {historyDecision === 'pending' && onSaveToHistory && onDiscardFromHistory && (
@@ -285,6 +291,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     minHeight: 40,
     textAlignVertical: 'top',
+  },
+  countWarning: {
+    color: '#F5A623',
+    fontSize: 12,
+    marginTop: 6,
+    lineHeight: 17,
   },
   fatigueMethodNote: {
     color: '#5B6270',

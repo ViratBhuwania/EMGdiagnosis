@@ -1,5 +1,6 @@
 /** Internal types for the on-device rep-detection/analysis pipeline. */
 import type { GyroAxis } from './imuAxis';
+import type { DataGap } from './dataGaps';
 
 export interface SetBoundary {
   /** Index into the session's row array (inclusive). */
@@ -15,6 +16,24 @@ export interface DetectedRep {
   peakIdx: number;
   recovered?: boolean;
   splitFromMerge?: boolean;
+  /** Set when this rep came from an arm-swing cycle (IMU+EMG) rather than from EMG peaks alone. */
+  fromImuCycle?: boolean;
+}
+
+/** How a set's rep count was arrived at -- kept so a surprising count can be explained later. */
+export interface SetCountInfo {
+  setNumber: number;
+  /** 'imu+emg': one rep per arm-swing that contains muscle activity. 'emg-only': IMU unusable or too few swings, EMG peaks alone. */
+  basis: 'imu+emg' | 'emg-only';
+  imuAlive: boolean;
+  /** What the EMG peaks alone would have counted. */
+  emgOnlyCount: number;
+  /** Arm-swing cycles found / counted as reps. */
+  cycleCount: number;
+  countedCycles: number;
+  /** Connection dropouts overlapping or right next to this set: how many, and total seconds of missing data. Reps made during a dropout were never recorded. */
+  dataGapCount: number;
+  dataGapSec: number;
 }
 
 export interface GyroEnergyTrack {
@@ -114,6 +133,10 @@ export interface SetFatigue {
 
 export interface SessionAnalysis {
   sampleRateHz: number;
+  /** One entry per set: how the rep count was decided, and whether a dropout touched the set. */
+  setCountInfo: SetCountInfo[];
+  /** Every connection dropout in the session (>= DATA_GAP_MIN_S without data). */
+  dataGaps: DataGap[];
   sets: SetFatigue[];
   reps: RepFeatures[];
   /** Highest peak among all detected reps this session. */

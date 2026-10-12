@@ -46,6 +46,15 @@ export interface SetSummaryRecord {
   meanDurationSec?: number;
   firstActivationPct?: number;
   lastActivationPct?: number;
+  /** How the rep count was decided: 'imu+emg' = one rep per arm swing that contains muscle activity; 'emg-only' = motion sensor unusable, counted from the muscle signal alone (less reliable). */
+  countBasis?: 'imu+emg' | 'emg-only';
+  /** What the muscle-signal peaks alone would have counted -- differs from repCount when swings decided it. */
+  emgOnlyRepCount?: number;
+  /** Whether the motion sensor was reading the arm during this set. */
+  imuAlive?: boolean;
+  /** Connection dropouts overlapping or right next to this set: how many, and total seconds of missing data. Reps made during a dropout were never recorded. */
+  dataGapCount?: number;
+  dataGapSec?: number;
 }
 
 /**

@@ -56,3 +56,45 @@ export const COMPLEMENTARY_FILTER_ALPHA = 0.98;
  * filter's normal (1-alpha) correction is far too slow to recover from.
  */
 export const MAX_FUSION_GAP_S = 0.5;
+
+/**
+ * IMU-anchored rep counting (imuCycles.ts). A rep is ONE arm-swing cycle
+ * (accelerometer principal component) that also contains muscle activity.
+ */
+/** A set whose gyro never varies by at least this much (dps, std) is treated as "IMU not reading the arm". */
+export const IMU_MIN_GYRO_STD_DPS = 3;
+/** ...and likewise for the accelerometer (g, std). */
+export const IMU_MIN_ACCEL_STD_G = 0.02;
+/** Smoothing of the swing signal and of the EMG used to confirm it. */
+export const CYCLE_SMOOTH_S = 0.3;
+/** A swing must be at least this fraction of the set's typical swing range to be a candidate. */
+export const CYCLE_MIN_PROMINENCE_FRAC = 0.3;
+/** Two swings closer than this are one swing (a curl takes longer than this). */
+export const CYCLE_MIN_SPACING_S = 1.0;
+/** How far either side of a swing's peak to look for the muscle burst that drives it. */
+export const CYCLE_EMG_WINDOW_S = 0.6;
+/** A swing counts only if the EMG around it reaches this fraction of the set's p90 EMG (swinging the arm without working the muscle is not a rep). */
+export const CYCLE_MIN_EMG_FRAC = 0.35;
+/** A swing smaller than this fraction of the set's typical counted swing is not a rep (e.g. putting the dumbbell down). */
+export const CYCLE_MIN_SIZE_FRAC = 0.5;
+/** The swing search window extends this far before / after the EMG-detected set span, to catch a weak first or last rep. */
+export const CYCLE_SEARCH_PAD_BEFORE_S = 2.5;
+export const CYCLE_SEARCH_PAD_AFTER_S = 1.0;
+
+/** A gap between consecutive rows longer than this (seconds) is a connection dropout, not normal jitter. */
+export const DATA_GAP_MIN_S = 2.0;
+/** Row spacings above this are excluded when estimating the sampling rate (they are dropouts, not sampling). */
+export const RATE_MAX_SPACING_S = 0.5;
+/** A dropout this close to a set (seconds before its start / after its end) is reported as affecting that set. */
+export const DATA_GAP_NEAR_SET_BEFORE_S = 2.0;
+export const DATA_GAP_NEAR_SET_AFTER_S = 6.0;
+
+/**
+ * A set's first rep can be a one-way move (arm goes from the pre-set posture
+ * to the hanging posture with a modest muscle burst, no return swing before
+ * the first full curl), so it has no swing peak of its own. It is counted if
+ * a burst before the first full swing reaches this fraction of the set's p90
+ * EMG AND the arm moved at least this fraction of a typical swing during it.
+ */
+export const LEAD_IN_MIN_EMG_FRAC = 0.4;
+export const LEAD_IN_MIN_MOVE_FRAC = 0.5;

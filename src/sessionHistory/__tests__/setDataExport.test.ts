@@ -62,6 +62,7 @@ describe('formatSessionDataText', () => {
     expect(text).toContain('ZCR Hz: [46.9, 47.7, 33.1]');
     expect(text).toContain('MDF change -12.3%');
     expect(text).toContain('app verdict: fatigue REACHED');
+    expect(text).toContain('max peak 90.0');
   });
 
   test('an old record without the new fields still formats (n/a, not a crash)', () => {

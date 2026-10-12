@@ -15,6 +15,7 @@ export default function ActivationBarChart({ reps }: ActivationBarChartProps) {
     return null;
   }
   const average = reps.reduce((a, r) => a + r.activationPct, 0) / reps.length;
+  const averageValue = reps.reduce((a, r) => a + r.peakRaw, 0) / reps.length;
 
   return (
     <View style={styles.container}>
@@ -23,6 +24,7 @@ export default function ActivationBarChart({ reps }: ActivationBarChartProps) {
         <View style={styles.barsRow}>
           {reps.map(rep => (
             <View key={rep.repNumber} style={styles.barColumn}>
+              <Text style={styles.barRawLabel}>{rep.peakRaw.toFixed(0)}</Text>
               <Text style={styles.barValueLabel}>{rep.activationPct.toFixed(0)}%</Text>
               <View
                 style={[
@@ -38,7 +40,7 @@ export default function ActivationBarChart({ reps }: ActivationBarChartProps) {
           ))}
         </View>
       </ScrollView>
-      <Text style={styles.averageLabel}>Average: {average.toFixed(1)}%</Text>
+      <Text style={styles.averageLabel}>Average: {average.toFixed(1)}% ({averageValue.toFixed(0)})</Text>
     </View>
   );
 }
@@ -59,18 +61,23 @@ const styles = StyleSheet.create({
   barsRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    height: MAX_BAR_HEIGHT + 40,
+    height: MAX_BAR_HEIGHT + 54,
   },
   barColumn: {
     alignItems: 'center',
     justifyContent: 'flex-end',
-    width: 28,
-    height: MAX_BAR_HEIGHT + 40,
+    width: 30,
+    height: MAX_BAR_HEIGHT + 54,
   },
   barValueLabel: {
     color: '#8A8F98',
     fontSize: 9,
     marginBottom: 2,
+  },
+  barRawLabel: {
+    color: '#6B7079',
+    fontSize: 8,
+    marginBottom: 1,
   },
   bar: {
     width: 14,

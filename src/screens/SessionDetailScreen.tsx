@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import type { SessionAnalysis } from '../analysis/types';
+import { countWarnings } from '../analysis/countWarnings';
 import SessionTraceChart from '../components/SessionTraceChart';
 import ActivationBarChart from '../components/ActivationBarChart';
 import FusionDebugChart from '../components/FusionDebugChart';
@@ -87,6 +88,27 @@ function SessionDetailScreen({
                   {setLabels[set.setNumber]?.trim() ? ` — ${setLabels[set.setNumber]}` : ''}
                 </Text>
                 <Text style={styles.setDetailLine}>Reps: {set.repCount}</Text>
+                {(() => {
+                  const info = analysis.setCountInfo?.find(i => i.setNumber === set.setNumber);
+                  if (!info) {
+                    return null;
+                  }
+                  return (
+                    <>
+                      {countWarnings(info).map(w => (
+                        <Text key={w} style={styles.warnLine}>
+                          ⚠ {w}
+                        </Text>
+                      ))}
+                      <Text style={styles.dataLine}>
+                        Counted by {info.basis === 'imu+emg' ? 'arm swings + muscle signal' : 'muscle signal only'}
+                        {info.emgOnlyCount !== set.repCount
+                          ? ` (muscle signal alone would say ${info.emgOnlyCount})`
+                          : ''}
+                      </Text>
+                    </>
+                  );
+                })()}
                 <Text style={styles.setDetailLine}>
                   Activation — first: {set.firstActivationPct.toFixed(0)}% · last:{' '}
                   {set.lastActivationPct.toFixed(0)}% · mean: {set.meanActivationPct.toFixed(0)}%
@@ -95,6 +117,18 @@ function SessionDetailScreen({
                   Mean duration: {set.meanDurationSec.toFixed(2)}s · Mean area:{' '}
                   {set.meanArea.toFixed(1)}
                 </Text>
+                {(() => {
+                  const setReps = analysis.reps.filter(r => r.setNumber === set.setNumber);
+                  if (setReps.length === 0) {
+                    return null;
+                  }
+                  const top = setReps.reduce((best, r) => (r.peakRaw > best.peakRaw ? r : best), setReps[0]);
+                  return (
+                    <Text style={styles.setDetailLine}>
+                      Peak value: {top.peakRaw.toFixed(0)} (rep {top.repNumber})
+                    </Text>
+                  );
+                })()}
                 {set.fatigueSlopeArea !== null && (
                   <Text style={styles.setDetailLine}>
                     Area slope: {set.fatigueSlopeArea.toFixed(2)}/rep
@@ -248,6 +282,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     marginTop: 8,
+  },
+  warnLine: {
+    color: '#F5A623',
+    fontSize: 13,
+    marginBottom: 6,
+    lineHeight: 18,
   },
   dataLine: {
     color: '#8A8F98',
