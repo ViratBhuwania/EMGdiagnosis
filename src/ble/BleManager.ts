@@ -9,6 +9,7 @@ import {
 import {
   SERVICE_UUID,
   TX_CHARACTERISTIC_UUID,
+  RX_CHARACTERISTIC_UUID,
   DEVICE_NAME,
 } from './constants';
 import type { DiscoveredDevice, BluetoothPowerState } from '../types';
@@ -50,6 +51,20 @@ const BASE64_ALPHABET =
  * Implemented by hand (no `atob`/Buffer dependency) since neither is guaranteed
  * to exist as a global across RN/Hermes versions.
  */
+function asciiToBase64(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i += 3) {
+    const b0 = text.charCodeAt(i);
+    const b1 = i + 1 < text.length ? text.charCodeAt(i + 1) : NaN;
+    const b2 = i + 2 < text.length ? text.charCodeAt(i + 2) : NaN;
+    const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2);
+    out += BASE64_ALPHABET[(n >> 18) & 63] + BASE64_ALPHABET[(n >> 12) & 63];
+    out += Number.isNaN(b1) ? '=' : BASE64_ALPHABET[(n >> 6) & 63];
+    out += Number.isNaN(b2) ? '=' : BASE64_ALPHABET[n & 63];
+  }
+  return out;
+}
+
 function base64ToAscii(base64: string): string {
   const clean = base64.replace(/=+$/, '');
   let bits = 0;
@@ -156,9 +171,11 @@ class EmgBleManager {
   async connect(
     deviceId: string,
     onDisconnected: DisconnectListener,
+    timeoutMs?: number,
   ): Promise<Device> {
     const device = await this.manager.connectToDevice(deviceId, {
       autoConnect: false,
+      ...(timeoutMs ? { timeout: timeoutMs } : {}),
     });
     await device.discoverAllServicesAndCharacteristics();
     this.connectedDevice = device;
@@ -194,6 +211,24 @@ class EmgBleManager {
         }
       },
     );
+  }
+
+  /** Write a short text command to the device's RX characteristic. Resolves false if there is no live connection. */
+  async writeCommand(text: string): Promise<boolean> {
+    const device = this.connectedDevice;
+    if (!device) {
+      return false;
+    }
+    try {
+      await device.writeCharacteristicWithResponseForService(
+        SERVICE_UUID,
+        RX_CHARACTERISTIC_UUID,
+        asciiToBase64(text),
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Reconnect to a previously-connected device id (used after an unexpected drop). */

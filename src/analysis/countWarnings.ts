@@ -11,6 +11,11 @@ export function countWarnings(info: SetCountInfo | undefined): string[] {
       `Connection dropped for ${info.dataGapSec.toFixed(0)}s around this set — reps made during it were not recorded, so the count may be low.`,
     );
   }
+  if (info.lightEffort) {
+    out.push(
+      `Muscle effort was only ${info.lightEffortPct ?? 0}% of your reference — treated as a warm-up, so its reps were not counted.`,
+    );
+  }
   if (info.basis === 'emg-only') {
     out.push(
       `Motion sensor ${

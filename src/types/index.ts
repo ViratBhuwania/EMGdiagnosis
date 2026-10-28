@@ -27,14 +27,34 @@ export interface ParsedSample {
 
   /** Upper-arm tilt / roll angle in degrees, derived from ayG/azG. */
   rollDeg: number;
+
+  /**
+   * The device's own row number and clock (ms), present when the firmware
+   * sends the 11-field row. Lets the app time rows by when they were
+   * measured (not when they arrived) and see exactly which rows never came.
+   */
+  deviceSeq?: number;
+  deviceMs?: number;
 }
 
 /** One fully parsed row of sensor data, as recorded during a session. */
 export interface SensorRow extends ParsedSample {
   /** 1-based sample index within the current recording. */
   sample: number;
-  /** Elapsed recording time in seconds at the moment this row was received. */
+  /**
+   * Elapsed recording time in seconds. With 11-field firmware this is the
+   * device's measurement time (so rows sent late after a reconnect still land
+   * at the right time); with older firmware it is the phone's arrival time.
+   */
   timeSec: number;
+}
+
+/** Something that happened during a recording that isn't a sensor row (link drop, app backgrounded, ...). */
+export interface SessionEvent {
+  /** Elapsed recording time (phone clock) in seconds. */
+  timeSec: number;
+  type: string;
+  detail?: string;
 }
 
 /** A user-marked repetition during a live session. */

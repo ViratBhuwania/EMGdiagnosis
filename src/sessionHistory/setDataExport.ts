@@ -1,4 +1,5 @@
 import type { SessionSummaryRecord } from './types';
+import { describeSessionMeta } from './sessionMeta';
 
 const bins = (v?: Array<number | null>): string =>
   v && v.length > 0 ? v.map(x => (x === null ? '-' : x.toFixed(1))).join(', ') : 'n/a';
@@ -18,6 +19,12 @@ export function formatSessionDataText(record: SessionSummaryRecord): string {
       `${record.exerciseTag ? ` | ${record.exerciseTag}` : ''}` +
       `${record.description ? ` | ${record.description}` : ''}`,
   );
+  if (record.meta) {
+    lines.push(
+      `tags: ${describeSessionMeta(record.meta) || 'none'}` +
+        `${record.meta.trueReps !== null ? ` | true reps (user): ${record.meta.trueReps}` : ''}`,
+    );
+  }
   for (const s of record.sets) {
     lines.push('');
     lines.push(

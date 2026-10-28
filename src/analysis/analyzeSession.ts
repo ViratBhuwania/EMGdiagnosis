@@ -26,8 +26,10 @@ import {
 import { extractRepFeatures, extractSetFatigue } from './featureExtraction';
 import { computeFusedAngle } from './sensorFusion';
 import { computeActivationCeiling } from '../calibration/activationCeiling';
+import { lightEffortFloor } from './lightEffort';
+import { percentile } from './dsp';
 
-export type AnalysisFailureReason = 'no_sets_detected' | 'no_reps_detected' | 'too_few_samples';
+export type AnalysisFailureReason = 'no_sets_detected' | 'no_reps_detected' | 'too_few_samples' | 'too_light';
 
 /** Below this fraction of the calibration reference, flag the session as low-engagement. */
 const LOW_ACTIVATION_FLOOR_FRAC = 0.35;
@@ -98,6 +100,30 @@ export function analyzeSession(
     rows,
     setCountInfo,
   );
+  // Light-effort gate: drop sets whose strong reps are far below the user's reference.
+  const light = lightEffortFloor(calibrationReference, maxEffortReference, rollingHistoricalPeak);
+  let keptReps = detectedReps;
+  if (light && detectedReps.length > 0) {
+    const lightSets = new Set<number>();
+    for (const info of setCountInfo) {
+      const peaks = detectedReps.filter(r => r.setNumber === info.setNumber).map(r => computeRepPeak(rows, r));
+      if (peaks.length === 0) {
+        continue;
+      }
+      const p90 = percentile(peaks, 90);
+      if (p90 < light.floor) {
+        lightSets.add(info.setNumber);
+        info.lightEffort = true;
+        info.lightEffortPct = Math.round((p90 / light.reference) * 100);
+      }
+    }
+    if (lightSets.size > 0) {
+      keptReps = detectedReps.filter(r => !lightSets.has(r.setNumber));
+      if (keptReps.length === 0) {
+        return { ok: false, reason: 'too_light' };
+      }
+    }
+  }
   const dataGaps = findDataGaps(rows);
   for (const info of setCountInfo) {
     const span = setSpansSec[info.setNumber - 1];
@@ -107,11 +133,11 @@ export function analyzeSession(
       info.dataGapSec = touching.reduce((acc, g) => acc + g.durationSec, 0);
     }
   }
-  if (detectedReps.length === 0) {
+  if (keptReps.length === 0) {
     return { ok: false, reason: 'no_reps_detected' };
   }
 
-  const sessionBestPeak = Math.max(...detectedReps.map(rep => computeRepPeak(rows, rep)));
+  const sessionBestPeak = Math.max(...keptReps.map(rep => computeRepPeak(rows, rep)));
   const activationCeiling = computeActivationCeiling({
     maxEffortReference,
     rollingHistoricalPeak,
@@ -119,7 +145,7 @@ export function analyzeSession(
   });
   const reps: RepFeatures[] = extractRepFeatures(
     rows,
-    detectedReps,
+    keptReps,
     noiseFloor,
     sampleRateHz,
     activationCeiling,

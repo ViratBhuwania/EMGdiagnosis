@@ -12,14 +12,15 @@ export function computeRollDeg(ayG: number, azG: number): number {
 /**
  * Parse one raw CSV row received from the TX characteristic notification into a
  * typed, unit-converted ParsedSample. The ESP32 guarantees each notification is
- * one complete row: "signal,envelope,ax,ay,az,gx,gy,gz,imu_fresh".
+ * one complete row: "signal,envelope,ax,ay,az,gx,gy,gz,imu_fresh[,seq,ms]".
  *
  * Returns null if the row is malformed, so a single corrupt BLE packet can be
  * dropped by the caller instead of crashing the session.
  */
 export function parseSensorRow(csv: string): ParsedSample | null {
   const fields = csv.trim().split(',');
-  if (fields.length !== 9) {
+  // 9 fields = older firmware; 11 fields = + device row number and clock.
+  if (fields.length !== 9 && fields.length !== 11) {
     return null;
   }
 
@@ -28,7 +29,7 @@ export function parseSensorRow(csv: string): ParsedSample | null {
     return null;
   }
 
-  const [signal, envelope, ax, ay, az, gx, gy, gz, imuFreshRaw] = values;
+  const [signal, envelope, ax, ay, az, gx, gy, gz, imuFreshRaw, seqRaw, msRaw] = values;
 
   const axG = ax / ACCEL_SCALE;
   const ayG = ay / ACCEL_SCALE;
@@ -49,5 +50,6 @@ export function parseSensorRow(csv: string): ParsedSample | null {
     gzDps,
     imuFresh: imuFreshRaw === 1,
     rollDeg: computeRollDeg(ayG, azG),
+    ...(fields.length === 11 ? { deviceSeq: seqRaw, deviceMs: msRaw } : {}),
   };
 }

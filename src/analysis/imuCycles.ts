@@ -24,6 +24,15 @@ import {
   CYCLE_SEARCH_PAD_AFTER_S,
   CYCLE_SEARCH_PAD_BEFORE_S,
   CYCLE_SMOOTH_S,
+  END_CYCLE_MAX_EMG_FRAC,
+  END_CYCLE_MAX_SWING_FRAC,
+  FRAGMENT_MAX_GAP_FRAC,
+  FRAGMENT_MAX_SWING_FRAC,
+  FRAGMENT_MAX_EMG_FRAC,
+  FRAGMENT_MIN_COUNTED,
+  END_CYCLE_WEAK_EMG_FRAC,
+  END_CYCLE_WEAK_SIZE_FRAC,
+  END_CYCLE_MIN_COUNTED,
   IMU_MIN_ACCEL_STD_G,
   IMU_MIN_GYRO_STD_DPS,
   LEAD_IN_MIN_EMG_FRAC,
@@ -228,6 +237,7 @@ export function findImuCycles(
     counted: c.emgPeak >= CYCLE_MIN_EMG_FRAC * env90 && c.prominence >= CYCLE_MIN_SIZE_FRAC * typicalSize,
   }));
 
+  let leadIn: ImuCycle | null = null;
   // Lead-in rep: a one-way first move before the first full swing (see LEAD_IN_* in config.ts).
   const counted = cycles.filter(c => c.counted).sort((a, b) => a.peakIdx - b.peakIdx);
   if (counted.length >= 2) {
@@ -254,11 +264,74 @@ export function findImuCycles(
         }
         const move = mx - mn;
         if (move >= LEAD_IN_MIN_MOVE_FRAC * typicalSize) {
-          cycles.push({ peakIdx: winStart + burstRel, prominence: move, emgPeak: burstVal, counted: true });
+          leadIn = { peakIdx: winStart + burstRel, prominence: move, emgPeak: burstVal, counted: true };
+          cycles.push(leadIn);
           cycles.sort((a, b) => a.peakIdx - b.peakIdx);
         }
       }
     }
   }
+
+  // Pick-up / put-down filter. The lead-in is a genuine weak one-way first move, so it is never a candidate.
+  dropFragmentCycles(cycles, leadIn);
+  dropWeakEndCycles(cycles, leadIn);
   return { health, cycles };
+}
+
+/**
+ * Picking the dumbbell up / putting it down produces a ragged "rep" at the
+ * very start or end of a set. Only the first and last counted cycle are ever
+ * considered (interior reps are never touched), and either of two signs
+ * drops one:
+ *  - its muscle burst is far below the set's median (pick-ups measured
+ *    0.34-0.49x; real end reps were never below 0.69x); or
+ *  - it is BOTH a clearly smaller swing AND a somewhat lower burst
+ *    (put-down: swing ~0.6x, burst ~0.69x; real end reps were >= 0.78x).
+ * Mutates `cycles`.
+ */
+function dropWeakEndCycles(cycles: ImuCycle[], exclude: ImuCycle | null): void {
+  const counted = cycles.filter(c => c.counted && c !== exclude).sort((a, b) => a.peakIdx - b.peakIdx);
+  if (counted.length < END_CYCLE_MIN_COUNTED) {
+    return;
+  }
+  const medEmg = median(counted.map(c => c.emgPeak));
+  const medSwing = median(counted.map(c => c.prominence));
+  const isWeak = (c: ImuCycle): boolean =>
+    (c.emgPeak < END_CYCLE_MAX_EMG_FRAC * medEmg && c.prominence < END_CYCLE_MAX_SWING_FRAC * medSwing) ||
+    (c.prominence < END_CYCLE_WEAK_SIZE_FRAC * medSwing && c.emgPeak < END_CYCLE_WEAK_EMG_FRAC * medEmg);
+  // Decide both ends against the original medians before dropping either.
+  const dropFirst = isWeak(counted[0]);
+  const dropLast = isWeak(counted[counted.length - 1]);
+  if (dropFirst) {
+    counted[0].counted = false;
+  }
+  if (dropLast) {
+    counted[counted.length - 1].counted = false;
+  }
+}
+
+/**
+ * Drops split-rep fragments: a small, weak swing that sits much closer to a
+ * neighbour than the set's typical rep spacing. Mutates `cycles`.
+ */
+function dropFragmentCycles(cycles: ImuCycle[], exclude: ImuCycle | null): void {
+  const counted = cycles.filter(c => c.counted && c !== exclude).sort((a, b) => a.peakIdx - b.peakIdx);
+  if (counted.length < FRAGMENT_MIN_COUNTED) {
+    return;
+  }
+  const medEmg = median(counted.map(c => c.emgPeak));
+  const medSwing = median(counted.map(c => c.prominence));
+  const medGap = median(counted.slice(1).map((c, i) => c.peakIdx - counted[i].peakIdx));
+  const fragments = counted.filter((c, i) => {
+    const gapPrev = i > 0 ? c.peakIdx - counted[i - 1].peakIdx : Infinity;
+    const gapNext = i < counted.length - 1 ? counted[i + 1].peakIdx - c.peakIdx : Infinity;
+    return (
+      Math.min(gapPrev, gapNext) < FRAGMENT_MAX_GAP_FRAC * medGap &&
+      c.prominence < FRAGMENT_MAX_SWING_FRAC * medSwing &&
+      c.emgPeak < FRAGMENT_MAX_EMG_FRAC * medEmg
+    );
+  });
+  for (const c of fragments) {
+    c.counted = false;
+  }
 }

@@ -1,5 +1,6 @@
 import type { SessionAnalysis } from '../analysis/types';
 import type { SessionSummaryRecord, SetUserTag } from './types';
+import { hasSessionMeta, type SessionMeta } from './sessionMeta';
 
 /**
  * Turns a freshly-computed SessionAnalysis into the compact record saved to
@@ -14,6 +15,7 @@ export function buildSessionSummaryRecord(
   exerciseTag: string = '',
   description: string = '',
   setTags: Record<number, SetUserTag> = {},
+  meta: SessionMeta | null = null,
 ): SessionSummaryRecord {
   const totalReps = analysis.sets.reduce((sum, set) => sum + set.repCount, 0);
   const calibrationRelativePct =
@@ -32,6 +34,9 @@ export function buildSessionSummaryRecord(
       return {
         setNumber: set.setNumber,
         label: setLabels[set.setNumber]?.trim() || null,
+        exercise: meta?.exercise ?? null,
+        equipment: meta?.equipment ?? null,
+        weightKg: meta?.weightKg ?? null,
         repCount: set.repCount,
         meanActivationPct: set.meanActivationPct,
         meanArea: set.meanArea,
@@ -76,5 +81,6 @@ export function buildSessionSummaryRecord(
     maxEffortReferenceAtTime: analysis.maxEffortReferenceUsed,
     rollingHistoricalPeakAtTime: analysis.rollingHistoricalPeakUsed,
     activationCeilingAtTime: analysis.activationCeiling,
+    ...(hasSessionMeta(meta) ? { meta: meta as SessionMeta } : {}),
   };
 }

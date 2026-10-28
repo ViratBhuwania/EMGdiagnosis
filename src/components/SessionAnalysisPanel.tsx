@@ -3,6 +3,9 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import type { AnalysisResult } from '../analysis/analyzeSession';
 import { countWarnings } from '../analysis/countWarnings';
 import type { ActivationSummary } from '../types';
+import SessionTagPicker from './SessionTagPicker';
+import type { SessionMeta } from '../sessionHistory/sessionMeta';
+import type { CustomTagOptions } from '../sessionHistory/sessionMetaStore';
 
 interface SessionAnalysisPanelProps {
   status: 'analyzing' | 'done';
@@ -26,12 +29,18 @@ interface SessionAnalysisPanelProps {
   /** Freeform notes for the user's own memory (e.g. "used the barbell today"), not used for grouping. */
   description?: string;
   onDescriptionChange?: (description: string) => void;
+  /** Exercise / equipment / weight / true reps / warm-up for this recording. Omit meta handlers to hide the picker. */
+  meta?: SessionMeta;
+  onMetaChange?: (meta: SessionMeta) => void;
+  customTagOptions?: CustomTagOptions;
+  onAddCustomTagOption?: (kind: 'exercises' | 'equipment', name: string) => void;
 }
 
 const FAILURE_MESSAGES: Record<string, string> = {
   too_few_samples: "This session was too short to analyze.",
   no_sets_detected: "No clear sets of activity were detected in this session.",
   no_reps_detected: "A set was detected, but individual reps couldn't be identified.",
+  too_light: "Movement was detected, but muscle effort was far below your reference — treated as a warm-up, so no reps were counted.",
 };
 
 function scoreOf10(pct: number): number {
@@ -49,6 +58,10 @@ export default function SessionAnalysisPanel({
   onDiscardFromHistory,
   setLabels = {},
   onLabelChange,
+  meta,
+  onMetaChange,
+  customTagOptions,
+  onAddCustomTagOption,
   // exerciseTag/onExerciseTagChange/description/onDescriptionChange are
   // unused while the tag/notes entry below is commented out -- left in
   // SessionAnalysisPanelProps so re-enabling is a one-line uncomment.
@@ -68,6 +81,15 @@ export default function SessionAnalysisPanel({
       <View style={styles.container}>
         <Text style={styles.title}>Session Summary</Text>
         <Text style={styles.failureText}>{message}</Text>
+      {meta && onMetaChange && customTagOptions && onAddCustomTagOption && (
+        <SessionTagPicker
+          meta={meta}
+          onChange={onMetaChange}
+          custom={customTagOptions}
+          onAddCustom={onAddCustomTagOption}
+          warmupLocked={historyDecision === 'saved'}
+        />
+      )}
         {fallbackSummary && (
           <View style={styles.fallback}>
             <Text style={styles.fallbackScore}>{fallbackSummary.averageScore10}/10</Text>
@@ -94,6 +116,15 @@ export default function SessionAnalysisPanel({
             weight, form, or sensor placement.
           </Text>
         </View>
+      )}
+      {meta && onMetaChange && customTagOptions && onAddCustomTagOption && (
+        <SessionTagPicker
+          meta={meta}
+          onChange={onMetaChange}
+          custom={customTagOptions}
+          onAddCustom={onAddCustomTagOption}
+          warmupLocked={historyDecision === 'saved'}
+        />
       )}
       <Text style={styles.totalReps}>
         Total reps: {totalReps} across {sets.length} set{sets.length === 1 ? '' : 's'}

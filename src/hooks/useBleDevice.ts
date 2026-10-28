@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BleError } from 'react-native-ble-plx';
 import { bleManager } from '../ble/BleManager';
 import { parseSensorRow } from '../ble/parser';
+import { FWINFO_PREFIX, parseFirmwareInfoLine, type FirmwareInfo } from '../ble/firmwareInfo';
 import { SUMMARY_LINE_PREFIX, SummaryDeduper, parseSetSummaryLine } from '../ble/summaryLine';
 import type { SetSummaryData } from '../ble/setSummary';
-import { RECONNECT_TIMEOUT_MS, SCAN_TIMEOUT_MS } from '../ble/constants';
+import { RECONNECT_RETRY_DELAY_MS, RECONNECT_TIMEOUT_MS, SCAN_TIMEOUT_MS, STARTUP_CONNECT_TIMEOUT_MS } from '../ble/constants';
+import { loadLastDeviceId, saveLastDeviceId } from '../ble/lastDevice';
 import type {
   BleConnectionState,
   BluetoothPowerState,
@@ -21,6 +23,8 @@ export interface UseBleDeviceResult {
   discoveredDevices: DiscoveredDevice[];
   connectedDeviceName: string | null;
   lastError: string | null;
+  /** What the connected firmware announced (version, offline-buffer size); null for firmware that doesn't. */
+  firmwareInfo: FirmwareInfo | null;
   /** Begin scanning for the ESP32; resolves once scanning has started. */
   startScan: () => Promise<void>;
   stopScan: () => void;
@@ -28,6 +32,11 @@ export interface UseBleDeviceResult {
   disconnect: () => Promise<void>;
   /** Manually retry connecting to the last-connected device after a drop. */
   resumeAfterDrop: () => Promise<void>;
+  /**
+   * Ask the device to send these rows (device row numbers, inclusive ranges) again.
+   * Resolves false when there is no live connection (nothing was sent).
+   */
+  requestResend: (ranges: Array<[number, number]>) => Promise<boolean>;
   /** Register a listener invoked with every freshly-parsed sample. Returns an unsubscribe fn. */
   subscribeToSamples: (listener: SampleListener) => () => void;
   /** Register a listener invoked with each per-set MDF/ZCR summary the firmware sends on the live channel. Returns an unsubscribe fn. */
@@ -52,11 +61,14 @@ export function useBleDevice(): UseBleDeviceResult {
     string | null
   >(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [firmwareInfo, setFirmwareInfo] = useState<FirmwareInfo | null>(null);
 
   const listenersRef = useRef<Set<SampleListener>>(new Set());
   const summaryListenersRef = useRef<Set<SummaryListener>>(new Set());
   const summaryDeduperRef = useRef(new SummaryDeduper());
   const lastDeviceIdRef = useRef<string | null>(null);
+  const reconnectActiveRef = useRef(false);
+  const startupTriedRef = useRef(false);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -74,6 +86,17 @@ export function useBleDevice(): UseBleDeviceResult {
         // this same characteristic, in place of a normal row -- see
         // ble/summaryLine.ts. Handle it before the CSV row parser, which
         // would just discard it.
+        if (csv.startsWith(FWINFO_PREFIX)) {
+          const info = parseFirmwareInfoLine(csv);
+          if (info) {
+            setFirmwareInfo(prev =>
+              prev && prev.version === info.version && prev.bufferRows === info.bufferRows
+                ? prev
+                : info,
+            );
+          }
+          return;
+        }
         if (csv.startsWith(SUMMARY_LINE_PREFIX)) {
           const summary = parseSetSummaryLine(csv);
           if (!summary) {
@@ -99,46 +122,66 @@ export function useBleDevice(): UseBleDeviceResult {
     );
   }, []);
 
-  const handleDisconnected = useCallback(
-    (error: BleError | null) => {
-      setConnectedDeviceName(null);
-      setLastError(error ? error.message : 'Device disconnected unexpectedly.');
+  // Keeps trying to get the device back after a drop, until it succeeds or the
+  // user leaves. (Before, it made one attempt, so a failed attempt meant a manual
+  // retry -- and after closing the app, a new scan.)
+  const reconnectLoopRef = useRef<((deviceId: string) => Promise<void>) | null>(null);
 
-      const deviceId = lastDeviceIdRef.current;
-      if (!deviceId) {
-        setConnectionState('disconnected');
+  const handleDisconnected = useCallback((error: BleError | null) => {
+    setConnectedDeviceName(null);
+    setLastError(error ? error.message : 'Device disconnected unexpectedly.');
+
+    const deviceId = lastDeviceIdRef.current;
+    if (!deviceId) {
+      setConnectionState('disconnected');
+      return;
+    }
+
+    setConnectionState('reconnecting');
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+    // After this long the screen offers manual choices; the retrying continues underneath.
+    reconnectTimeoutRef.current = setTimeout(() => {
+      setConnectionState(prev => (prev === 'reconnecting' ? 'disconnected' : prev));
+    }, RECONNECT_TIMEOUT_MS);
+
+    reconnectLoopRef.current?.(deviceId);
+  }, []);
+
+  const runReconnectLoop = useCallback(
+    async (deviceId: string) => {
+      if (reconnectActiveRef.current) {
         return;
       }
-
-      setConnectionState('reconnecting');
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      reconnectTimeoutRef.current = setTimeout(() => {
-        setConnectionState(prev =>
-          prev === 'reconnecting' ? 'disconnected' : prev,
-        );
-      }, RECONNECT_TIMEOUT_MS);
-
-      bleManager
-        .reconnect(deviceId, handleDisconnected)
-        .then(device => {
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
-            reconnectTimeoutRef.current = null;
+      reconnectActiveRef.current = true;
+      try {
+        while (lastDeviceIdRef.current === deviceId) {
+          try {
+            const device = await bleManager.reconnect(deviceId, handleDisconnected);
+            if (lastDeviceIdRef.current !== deviceId) {
+              return; // user left while this attempt was running
+            }
+            if (reconnectTimeoutRef.current) {
+              clearTimeout(reconnectTimeoutRef.current);
+              reconnectTimeoutRef.current = null;
+            }
+            setConnectedDeviceName(device.name);
+            beginNotifications();
+            setConnectionState('connected');
+            setLastError(null);
+            return;
+          } catch {
+            await new Promise<void>(resolve => setTimeout(() => resolve(), RECONNECT_RETRY_DELAY_MS));
           }
-          setConnectedDeviceName(device.name);
-          beginNotifications();
-          setConnectionState('connected');
-          setLastError(null);
-        })
-        .catch(() => {
-          // The pending timeout above will flip state to 'disconnected';
-          // the user can retry manually via resumeAfterDrop().
-        });
+        }
+      } finally {
+        reconnectActiveRef.current = false;
+      }
     },
-    [beginNotifications],
+    [beginNotifications, handleDisconnected],
   );
+  reconnectLoopRef.current = runReconnectLoop;
 
   const stopScan = useCallback(() => {
     bleManager.stopScan();
@@ -191,6 +234,7 @@ export function useBleDevice(): UseBleDeviceResult {
         setConnectedDeviceName(device.name);
         beginNotifications();
         setConnectionState('connected');
+        saveLastDeviceId(deviceId);
       } catch (e) {
         setConnectionState('disconnected');
         setLastError(e instanceof Error ? e.message : String(e));
@@ -206,16 +250,34 @@ export function useBleDevice(): UseBleDeviceResult {
     }
     setLastError(null);
     setConnectionState('reconnecting');
-    try {
-      const device = await bleManager.reconnect(deviceId, handleDisconnected);
-      setConnectedDeviceName(device.name);
-      beginNotifications();
-      setConnectionState('connected');
-    } catch (e) {
-      setConnectionState('disconnected');
-      setLastError(e instanceof Error ? e.message : String(e));
+    // No-op if the background retry is already running; it will flip the state to connected.
+    reconnectLoopRef.current?.(deviceId);
+  }, []);
+
+  // On launch: reconnect to the last device straight away (no scan). If it isn't
+  // reachable, fall back quietly to the scan screen.
+  useEffect(() => {
+    if (startupTriedRef.current || powerState !== 'poweredOn') {
+      return;
     }
-  }, [beginNotifications, handleDisconnected]);
+    startupTriedRef.current = true;
+    loadLastDeviceId().then(async id => {
+      if (!id || lastDeviceIdRef.current) {
+        return;
+      }
+      lastDeviceIdRef.current = id;
+      setConnectionState('connecting');
+      try {
+        const device = await bleManager.connect(id, handleDisconnected, STARTUP_CONNECT_TIMEOUT_MS);
+        setConnectedDeviceName(device.name);
+        beginNotifications();
+        setConnectionState('connected');
+      } catch {
+        lastDeviceIdRef.current = null;
+        setConnectionState('idle');
+      }
+    });
+  }, [powerState, beginNotifications, handleDisconnected]);
 
   const disconnect = useCallback(async () => {
     if (reconnectTimeoutRef.current) {
@@ -226,6 +288,15 @@ export function useBleDevice(): UseBleDeviceResult {
     lastDeviceIdRef.current = null;
     setConnectedDeviceName(null);
     setConnectionState('idle');
+  }, []);
+
+  const connectionStateRef = useRef<BleConnectionState>('idle');
+  connectionStateRef.current = connectionState;
+  const requestResend = useCallback(async (ranges: Array<[number, number]>) => {
+    if (connectionStateRef.current !== 'connected' || ranges.length === 0) {
+      return false;
+    }
+    return bleManager.writeCommand(`RS,${ranges.map(([a, b]) => `${a}-${b}`).join(',')}`);
   }, []);
 
   const subscribeToSamples = useCallback((listener: SampleListener) => {
@@ -260,11 +331,13 @@ export function useBleDevice(): UseBleDeviceResult {
     discoveredDevices,
     connectedDeviceName,
     lastError,
+    firmwareInfo,
     startScan,
     stopScan,
     connect,
     disconnect,
     resumeAfterDrop,
+    requestResend,
     subscribeToSamples,
     subscribeToSummaries,
   };

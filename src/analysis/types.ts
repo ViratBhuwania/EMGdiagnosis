@@ -34,6 +34,10 @@ export interface SetCountInfo {
   /** Connection dropouts overlapping or right next to this set: how many, and total seconds of missing data. Reps made during a dropout were never recorded. */
   dataGapCount: number;
   dataGapSec: number;
+  /** True if the set's strong reps were far below the user's reference effort (e.g. a warm-up), so its reps were not counted. */
+  lightEffort?: boolean;
+  /** That set's strong-rep level as a percent of the reference used. */
+  lightEffortPct?: number;
 }
 
 export interface GyroEnergyTrack {

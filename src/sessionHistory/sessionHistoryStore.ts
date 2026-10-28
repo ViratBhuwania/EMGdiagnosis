@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import type { SessionSummaryRecord, SetUserTag } from './types';
+import type { SessionMeta } from './sessionMeta';
 
 /** One file per profile, so different people's session history never mixes. */
 function storePath(profileId: string): string {
@@ -88,5 +89,16 @@ export async function updateSetUserTag(
           ),
         },
   );
+  await RNFS.writeFile(storePath(profileId), JSON.stringify(updated), 'utf8');
+}
+
+/** Replaces the exercise/equipment/weight info on one saved session -- lets it be filled in after saving. */
+export async function updateSessionMeta(
+  profileId: string,
+  sessionId: string,
+  meta: SessionMeta,
+): Promise<void> {
+  const history = await loadSessionHistory(profileId);
+  const updated = history.map(record => (record.id !== sessionId ? record : { ...record, meta }));
   await RNFS.writeFile(storePath(profileId), JSON.stringify(updated), 'utf8');
 }

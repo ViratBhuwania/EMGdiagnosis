@@ -1,3 +1,5 @@
+import type { SessionMeta } from './sessionMeta';
+
 /** The user's own judgement of a set, entered in Session Details -- the ground truth for tuning the fatigue rule. */
 export type SetOutcome = 'failure' | 'easy';
 export type SetHand = 'L' | 'R';
@@ -11,6 +13,10 @@ export interface SetSummaryRecord {
   setNumber: number;
   /** User-entered exercise name for this set (e.g. "Hammer Curl"), or null if never labeled. */
   label: string | null;
+  /** What the recording this set came from was tagged as (exercise / equipment / weight); absent on older records. Used to group sets by exercise in the workout summary. */
+  exercise?: string | null;
+  equipment?: string | null;
+  weightKg?: number | null;
   repCount: number;
   /** Session-local activation % (relative to that session's own best rep) -- NOT comparable across sessions. */
   meanActivationPct: number;
@@ -101,4 +107,6 @@ export interface SessionSummaryRecord {
   maxEffortReferenceAtTime: number | null;
   rollingHistoricalPeakAtTime: number | null;
   activationCeilingAtTime: number;
+  /** What the user was doing (exercise, equipment, weight, true reps, warm-up). Absent on older records. */
+  meta?: SessionMeta;
 }

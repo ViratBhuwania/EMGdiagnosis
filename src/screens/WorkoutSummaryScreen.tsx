@@ -2,6 +2,7 @@ import React from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { SetSummaryRecord } from '../sessionHistory/types';
 import { setColor } from '../components/setColors';
+import { groupSetsByExercise } from '../sessionHistory/exerciseGroups';
 
 interface WorkoutSummaryScreenProps {
   visible: boolean;
@@ -16,11 +17,6 @@ interface WorkoutSummaryScreenProps {
   onClose: () => void;
 }
 
-function setTitleFor(index: number, set: SetSummaryRecord): string {
-  const n = index + 1;
-  return set.label ? `Set ${n} — ${set.label}` : `Set ${n}`;
-}
-
 /** Percent change of `to` relative to `from`, e.g. 20 means "20% more." */
 function pctChange(from: number, to: number): number | null {
   if (from <= 0) {
@@ -29,9 +25,58 @@ function pctChange(from: number, to: number): number | null {
   return ((to - from) / from) * 100;
 }
 
+interface ComparisonLineProps {
+  later: SetSummaryRecord;
+  earlier: SetSummaryRecord;
+  laterNumber: number;
+  earlierNumber: number;
+  laterColor: string;
+  earlierColor: string;
+  firstToLast?: boolean;
+}
+
+/** "Set 2 had 12% more activation than Set 1." (with the weights when they differ). */
+function ComparisonLine({
+  later,
+  earlier,
+  laterNumber,
+  earlierNumber,
+  laterColor,
+  earlierColor,
+  firstToLast,
+}: ComparisonLineProps) {
+  const change = pctChange(earlier.p90Peak, later.p90Peak);
+  const isMore = change !== null && change >= 0;
+  const weightNote =
+    later.weightKg != null && earlier.weightKg != null && later.weightKg !== earlier.weightKg
+      ? ` (${later.weightKg} kg vs ${earlier.weightKg} kg)`
+      : '';
+  if (change === null) {
+    return (
+      <Text style={styles.comparisonLine}>
+        {`Set ${laterNumber} vs. Set ${earlierNumber}: not comparable`}
+      </Text>
+    );
+  }
+  return (
+    <Text style={styles.comparisonLine}>
+      {firstToLast ? 'First to last: ' : ''}
+      <Text style={{ color: laterColor }}>Set {laterNumber}</Text>
+      {' had '}
+      <Text style={isMore ? styles.more : styles.less}>
+        {Math.abs(change).toFixed(1)}% {isMore ? 'more' : 'less'}
+      </Text>
+      {' activation than '}
+      <Text style={{ color: earlierColor }}>Set {earlierNumber}</Text>
+      {weightNote}.
+    </Text>
+  );
+}
+
 /**
  * Set-to-set comparison across the WHOLE workout (every saved Start/Stop
- * recording since Start Workout), distinct from SessionDetailScreen's
+ * recording since Start Workout), grouped by exercise so each exercise's sets
+ * are compared only with each other, distinct from SessionDetailScreen's
  * trace/chart view, which only ever shows one recording. Per set: the
  * 90th-percentile peak (a steadier "typical high effort" figure than the
  * single max) and the highest single rep, then the percent change from
@@ -56,42 +101,56 @@ export default function WorkoutSummaryScreen({ visible, sets, onClose }: Workout
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.scroll}>
-            {sets.map((set, i) => (
-              <View key={i} style={styles.card}>
-                <Text style={[styles.setTitle, { color: setColor(i + 1) }]}>{setTitleFor(i, set)}</Text>
-                <Text style={styles.line}>Reps: {set.repCount}</Text>
-                <Text style={styles.line}>Mean 90th-percentile EMG: {set.p90Peak.toFixed(1)}</Text>
-                <Text style={styles.line}>Highest EMG reached: {set.peakEnvelope.toFixed(1)}</Text>
+            {groupSetsByExercise(sets).map(group => (
+              <View key={group.key || 'unlabelled'}>
+                <Text style={styles.groupTitle}>
+                  {group.title} · {group.items.length} {group.items.length === 1 ? 'set' : 'sets'}
+                </Text>
+
+                {group.items.map(({ set, workoutIndex }, n) => (
+                  <View key={workoutIndex} style={styles.card}>
+                    <Text style={[styles.setTitle, { color: setColor(workoutIndex + 1) }]}>
+                      {`Set ${n + 1}${group.items.length > 1 ? ` of ${group.title}` : ''}`}
+                    </Text>
+                    <Text style={styles.line}>Reps: {set.repCount}</Text>
+                    {set.weightKg != null && <Text style={styles.line}>Weight: {set.weightKg} kg</Text>}
+                    <Text style={styles.line}>Mean 90th-percentile EMG: {set.p90Peak.toFixed(1)}</Text>
+                    <Text style={styles.line}>Highest EMG reached: {set.peakEnvelope.toFixed(1)}</Text>
+                  </View>
+                ))}
+
+                {group.items.length > 1 && (
+                  <View style={styles.card}>
+                    <Text style={styles.cardTitle}>{group.title}: set-to-set comparison</Text>
+                    {group.items.slice(1).map(({ set, workoutIndex }, i) => {
+                      const prev = group.items[i];
+                      return (
+                        <ComparisonLine
+                          key={workoutIndex}
+                          later={set}
+                          earlier={prev.set}
+                          laterNumber={i + 2}
+                          earlierNumber={i + 1}
+                          laterColor={setColor(workoutIndex + 1)}
+                          earlierColor={setColor(prev.workoutIndex + 1)}
+                        />
+                      );
+                    })}
+                    {group.items.length > 2 && (
+                      <ComparisonLine
+                        later={group.items[group.items.length - 1].set}
+                        earlier={group.items[0].set}
+                        laterNumber={group.items.length}
+                        earlierNumber={1}
+                        laterColor={setColor(group.items[group.items.length - 1].workoutIndex + 1)}
+                        earlierColor={setColor(group.items[0].workoutIndex + 1)}
+                        firstToLast
+                      />
+                    )}
+                  </View>
+                )}
               </View>
             ))}
-
-            {sets.length > 1 && (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Set-to-set comparison</Text>
-                {sets.slice(1).map((set, i) => {
-                  const previous = sets[i];
-                  const change = pctChange(previous.p90Peak, set.p90Peak);
-                  const isMore = change !== null && change >= 0;
-                  return (
-                    <Text key={i + 1} style={styles.comparisonLine}>
-                      {change === null ? (
-                        `${setTitleFor(i + 1, set)} vs. ${setTitleFor(i, previous)}: not comparable`
-                      ) : (
-                        <>
-                          <Text style={{ color: setColor(i + 2) }}>Set {i + 2}</Text>
-                          {' had '}
-                          <Text style={isMore ? styles.more : styles.less}>
-                            {Math.abs(change).toFixed(1)}% {isMore ? 'more' : 'less'}
-                          </Text>
-                          {' activation than '}
-                          <Text style={{ color: setColor(i + 1) }}>Set {i + 1}</Text>.
-                        </>
-                      )}
-                    </Text>
-                  );
-                })}
-              </View>
-            )}
           </ScrollView>
         )}
       </SafeAreaView>
@@ -142,6 +201,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
+  },
+  groupTitle: {
+    color: '#E6E8EB',
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 8,
+    marginBottom: 8,
   },
   cardTitle: {
     color: '#8A8F98',

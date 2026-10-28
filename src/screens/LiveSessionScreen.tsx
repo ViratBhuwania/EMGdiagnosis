@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -12,6 +13,9 @@ import type { UseBleDeviceResult } from '../hooks/useBleDevice';
 import { useSessionRecorder } from '../hooks/useSessionRecorder';
 import { useSetSummaries } from '../hooks/useSetSummaries';
 import { exportSession, shareExportedSession } from '../export/exportSession';
+import { clearAutosave, loadAutosave } from '../session/autosaveStore';
+import { bufferSeconds } from '../ble/firmwareInfo';
+import { DEVICE_ROW_PERIOD_S } from '../export/gapReport';
 import { analyzeSession, AnalysisResult } from '../analysis/analyzeSession';
 import LiveChart, { LiveChartHandle } from '../components/LiveChart';
 import RepMarkerButton from '../components/RepMarkerButton';
@@ -39,7 +43,13 @@ import { loadExerciseRollingState, saveExerciseRollingState } from '../calibrati
 import { recomputeWithCeiling } from '../analysis/recomputeActivationCeiling';
 import type { DetectedSetSpan } from '../analysis/setPairing';
 import { applySummaryVerdicts } from '../analysis/summaryMdf';
-import { loadSessionHistory, saveSessionSummary, updateSetUserTag } from '../sessionHistory/sessionHistoryStore';
+import { loadSessionHistory, saveSessionSummary, updateSessionMeta, updateSetUserTag } from '../sessionHistory/sessionHistoryStore';
+import { EMPTY_SESSION_META, type SessionMeta } from '../sessionHistory/sessionMeta';
+import {
+  addCustomTagOption,
+  loadCustomTagOptions,
+  type CustomTagOptions,
+} from '../sessionHistory/sessionMetaStore';
 import type { SessionSummaryRecord, SetSummaryRecord, SetUserTag } from '../sessionHistory/types';
 import { buildSessionSummaryRecord } from '../sessionHistory/buildSummary';
 
@@ -97,8 +107,15 @@ export default function LiveSessionScreen({
   const setTagsRef = useRef<Record<number, SetUserTag>>({});
   /** Id of this recording's history record once saved, so a label entered after saving can still be written to it. */
   const savedSessionIdRef = useRef<string | null>(null);
+  /** Exercise / equipment / weight / true reps / warm-up for this recording -- see sessionMeta.ts for why it's separate from exerciseTag. */
+  const [sessionMeta, setSessionMeta] = useState<SessionMeta>(EMPTY_SESSION_META);
+  const [customTagOptions, setCustomTagOptions] = useState<CustomTagOptions>({ exercises: [], equipment: [] });
   const [exerciseTag, setExerciseTag] = useState('');
   const [description, setDescription] = useState('');
+
+  useEffect(() => {
+    loadCustomTagOptions().then(setCustomTagOptions);
+  }, []);
 
   const [calibrationReference, setCalibrationReference] = useState<number | null>(null);
   const [lastCalibratedAt, setLastCalibratedAt] = useState<number | null>(null);
@@ -326,6 +343,7 @@ export default function LiveSessionScreen({
       exerciseTag,
       description,
       setTags,
+      sessionMeta,
     );
     savedSessionIdRef.current = record.id;
     const repPeaks = analysisResult.analysis.reps.map(r => r.peakRaw);
@@ -340,8 +358,14 @@ export default function LiveSessionScreen({
     // Folds this recording's rep peaks into the exercise's still-open
     // workout -- finalizing only happens via the explicit End Workout
     // action, not automatically here.
-    const updatedRollingState = mergeRecordingIntoPendingSession(rollingState, repPeaks);
-    await saveExerciseRollingState(profileId, exerciseTag, updatedRollingState);
+    // A recording flagged as warm-up is saved to history but kept out of the
+    // effort reference, so light warm-up reps can't drag the reference down.
+    const updatedRollingState = sessionMeta.isWarmup
+      ? rollingState
+      : mergeRecordingIntoPendingSession(rollingState, repPeaks);
+    if (!sessionMeta.isWarmup) {
+      await saveExerciseRollingState(profileId, exerciseTag, updatedRollingState);
+    }
 
     // "Current ceiling" for this check excludes today's session peak on
     // purpose -- it's already reflected in updatedRollingState (via the
@@ -359,7 +383,7 @@ export default function LiveSessionScreen({
     setShowRetestPrompt(shouldSuggestMaxEffortRetest(updatedHistory, exerciseTag, currentCeiling));
 
     setHistoryDecision('saved');
-  }, [analysisResult, profileId, setLabels, exerciseTag, description, setTags]);
+  }, [analysisResult, profileId, setLabels, exerciseTag, description, setTags, sessionMeta]);
 
   const handleDiscardFromHistory = useCallback(() => {
     setHistoryDecision('discarded');
@@ -381,9 +405,28 @@ export default function LiveSessionScreen({
     savedSessionIdRef.current = null;
     setExerciseTag('');
     setDescription('');
+    setSessionMeta(EMPTY_SESSION_META);
     resetSummaries();
-    recorder.start();
-  }, [recorder, resetSummaries]);
+    recorder.start(ble.firmwareInfo?.version ?? null);
+  }, [recorder, resetSummaries, ble.firmwareInfo]);
+
+  const handleMetaChange = useCallback(
+    (next: SessionMeta) => {
+      setSessionMeta(next);
+      // Already saved to history: write the tags into the saved record too.
+      if (historyDecision === 'saved' && savedSessionIdRef.current) {
+        updateSessionMeta(profileId, savedSessionIdRef.current, next).catch(() => {});
+      }
+    },
+    [historyDecision, profileId],
+  );
+
+  const handleAddCustomTagOption = useCallback(
+    (kind: 'exercises' | 'equipment', name: string) => {
+      addCustomTagOption(kind, name, customTagOptions).then(setCustomTagOptions);
+    },
+    [customTagOptions],
+  );
 
   const handleLabelChange = useCallback((setNumber: number, label: string) => {
     setSetLabels(prev => ({ ...prev, [setNumber]: label }));
@@ -411,8 +454,9 @@ export default function LiveSessionScreen({
    */
   const closeDetailScreen = useCallback(() => setShowDetailScreen(false), []);
 
-  const handleStop = useCallback(() => {
-    recorder.stop();
+  const handleStop = useCallback(async () => {
+    // May wait a few seconds for data the device was still holding (see recorder.stop).
+    await recorder.stop();
     runAnalysis(recorder.getSnapshot().rows);
   }, [recorder, runAnalysis]);
 
@@ -432,7 +476,15 @@ export default function LiveSessionScreen({
       return;
     }
     try {
-      const result = await exportSession(rows, reps);
+      const { events, startedAt } = recorder.getSnapshot();
+      const result = await exportSession(rows, reps, sessionMeta, {
+        events,
+        startedAt,
+        firmwareVersion: ble.firmwareInfo?.version ?? null,
+        bufferSeconds: bufferSeconds(ble.firmwareInfo),
+      });
+      // The workbook is written; the on-disk autosave has done its job.
+      await clearAutosave();
       await shareExportedSession(result);
     } catch (e) {
       Alert.alert(
@@ -440,13 +492,87 @@ export default function LiveSessionScreen({
         e instanceof Error ? e.message : 'Could not build or share the session file.',
       );
     }
-  }, [recorder]);
+  }, [recorder, sessionMeta, ble.firmwareInfo]);
 
   const handleStopAndExport = useCallback(async () => {
-    recorder.stop();
+    await recorder.stop();
     runAnalysis(recorder.getSnapshot().rows);
     await handleExport();
   }, [recorder, runAnalysis, handleExport]);
+
+  // --- Recording safety: recover a recording the app lost, and log what happens to the link. ---
+
+  // Let the recorder ask the device to re-send rows it saw skipped.
+  useEffect(() => {
+    recorder.setResendHandler(ble.requestResend);
+    return () => recorder.setResendHandler(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ble.requestResend]);
+
+  // On opening: if the last recording was never exported (app closed or killed mid-recording),
+  // offer to bring it back.
+  useEffect(() => {
+    let cancelled = false;
+    loadAutosave().then(rec => {
+      if (cancelled || !rec || rec.rows.length < 50) {
+        return;
+      }
+      const secs = Math.round(rec.rows[rec.rows.length - 1].timeSec);
+      Alert.alert(
+        'Unsaved recording found',
+        `A recording from ${new Date(rec.header.startedAt).toLocaleString()} was not exported ` +
+          `(${rec.rows.length} samples, about ${secs} s). Recover it?`,
+        [
+          { text: 'Discard', style: 'destructive', onPress: () => clearAutosave() },
+          {
+            text: 'Recover',
+            onPress: () => {
+              hasSessionData.current = true;
+              recorder.loadRecovered(rec);
+              runAnalysis(rec.rows);
+            },
+          },
+        ],
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Once per screen open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Log link drops / returns and the app going to the background (screen lock) into the recording.
+  const prevConnectionRef = useRef(ble.connectionState);
+  const disconnectedAtSecRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prev = prevConnectionRef.current;
+    prevConnectionRef.current = ble.connectionState;
+    if (!recorder.isRecording) {
+      disconnectedAtSecRef.current = null;
+      return;
+    }
+    if (prev === 'connected' && ble.connectionState !== 'connected') {
+      disconnectedAtSecRef.current = recorder.nowElapsedSec();
+      recorder.addEvent('disconnected', ble.lastError ?? undefined);
+    } else if (prev !== 'connected' && ble.connectionState === 'connected') {
+      disconnectedAtSecRef.current = null;
+      recorder.addEvent('reconnected');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ble.connectionState]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        recorder.addEvent('app_foreground');
+      } else {
+        recorder.addEvent('app_background', next);
+      }
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const snapshot = recorder.getSnapshot();
   const canExport = !recorder.isRecording && snapshot.rows.length > 0;
@@ -465,6 +591,7 @@ export default function LiveSessionScreen({
           exerciseTag,
           description,
           setTags,
+          sessionMeta,
         ).sets
       : [];
   const workoutSummarySets = [...workoutSets, ...unsavedCurrentSets];
@@ -472,6 +599,31 @@ export default function LiveSessionScreen({
   const showReconnectPrompt =
     (ble.connectionState === 'disconnected' || ble.connectionState === 'reconnecting') &&
     hasSessionData.current;
+
+  // What the person should know while the link is down. Firmware with the offline buffer keeps
+  // measuring and sends the data after reconnecting, until its buffer is full.
+  const bufferSecs = bufferSeconds(ble.firmwareInfo);
+  const awaySecs =
+    disconnectedAtSecRef.current !== null
+      ? Math.max(0, recorder.elapsedSec - disconnectedAtSecRef.current)
+      : 0;
+  let disconnectMessage: string;
+  if (!recorder.isRecording) {
+    disconnectMessage = `${snapshot.rows.length} samples were captured before the drop.`;
+  } else if (bufferSecs === null) {
+    disconnectMessage =
+      `This device firmware cannot hold data while disconnected, so data during the drop is lost. ` +
+      `${snapshot.rows.length} samples captured so far are safe.`;
+  } else if (awaySecs >= bufferSecs) {
+    disconnectMessage =
+      `⚠ The device's ${Math.round(bufferSecs)} s buffer is full — data from now until it reconnects is being LOST. ` +
+      `Reconnect (or move closer) now.`;
+  } else {
+    disconnectMessage =
+      `The device is keeping the data (${Math.round(awaySecs)} s of its ${Math.round(bufferSecs)} s buffer used) ` +
+      `and will send it when it reconnects. ${snapshot.rows.length} samples saved so far.`;
+  }
+  const lostSecs = recorder.lostRows * DEVICE_ROW_PERIOD_S;
 
   const showGiveUpPrompt =
     ble.connectionState === 'disconnected' && !hasSessionData.current;
@@ -594,11 +746,7 @@ export default function LiveSessionScreen({
                 ? 'Connection lost — reconnecting…'
                 : 'Connection lost'}
             </Text>
-            <Text style={styles.bannerBody}>
-              {recorder.isRecording
-                ? `Recording is paused. ${snapshot.rows.length} samples captured so far are safe.`
-                : `${snapshot.rows.length} samples were captured before the drop.`}
-            </Text>
+            <Text style={styles.bannerBody}>{disconnectMessage}</Text>
             {ble.connectionState === 'disconnected' && (
               <View style={styles.bannerActions}>
                 <Text style={styles.bannerAction} onPress={ble.resumeAfterDrop}>
@@ -626,6 +774,35 @@ export default function LiveSessionScreen({
                 Back to Scan
               </Text>
             </View>
+          </View>
+        )}
+
+        {recorder.finishing && (
+          <View style={styles.banner}>
+            <Text style={styles.bannerTitle}>Receiving the last data from the device…</Text>
+            <Text style={styles.bannerBody}>
+              {ble.connectionState === 'connected'
+                ? `${recorder.finishing.behindSec.toFixed(1)} s still to come` +
+                  (recorder.finishing.pendingRows > 0
+                    ? `, ${recorder.finishing.pendingRows} skipped rows being re-requested`
+                    : '') +
+                  '. Keep the device in range.'
+                : 'Device not connected — waiting for it to come back so the data it kept can be sent.'}
+            </Text>
+            <View style={styles.bannerActions}>
+              <Text style={styles.bannerActionDanger} onPress={recorder.skipFinishing}>
+                Skip &amp; finish now
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {recorder.lostRows > 0 && (
+          <View style={styles.banner}>
+            <Text style={styles.bannerTitle}>Data missing from this recording</Text>
+            <Text style={styles.bannerBody}>
+              {`About ${lostSecs.toFixed(1)} s of data never arrived (the connection was down longer than the device's buffer, or the link lost it). Rep counts near the gap may be low. The Gaps sheet in the export lists where.`}
+            </Text>
           </View>
         )}
 
@@ -698,6 +875,10 @@ export default function LiveSessionScreen({
             onExerciseTagChange={setExerciseTag}
             description={description}
             onDescriptionChange={setDescription}
+            meta={sessionMeta}
+            onMetaChange={handleMetaChange}
+            customTagOptions={customTagOptions}
+            onAddCustomTagOption={handleAddCustomTagOption}
           />
         )}
 

@@ -33,3 +33,11 @@ export const SCAN_TIMEOUT_MS = 15000;
 
 /** How long to wait for an automatic reconnect before prompting the user, in milliseconds. */
 export const RECONNECT_TIMEOUT_MS = 8000;
+
+/** Pause between automatic reconnect attempts after a drop. */
+export const RECONNECT_RETRY_DELAY_MS = 1500;
+/** How long the on-launch reconnect to the last device waits before falling back to the scan screen. */
+export const STARTUP_CONNECT_TIMEOUT_MS = 8000;
+
+/** RX characteristic (phone -> device commands, e.g. "RS,100-160" = send rows 100..160 again). */
+export const RX_CHARACTERISTIC_UUID = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';

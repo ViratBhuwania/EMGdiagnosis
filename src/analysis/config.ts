@@ -98,3 +98,30 @@ export const DATA_GAP_NEAR_SET_AFTER_S = 6.0;
  */
 export const LEAD_IN_MIN_EMG_FRAC = 0.4;
 export const LEAD_IN_MIN_MOVE_FRAC = 0.5;
+
+/**
+ * Pick-up / put-down filter (imuCycles.ts). The first or last counted swing of
+ * a set is dropped if its EMG peak is below END_CYCLE_MAX_EMG_FRAC of the
+ * set's median counted EMG peak, or if its swing is below
+ * END_CYCLE_WEAK_SIZE_FRAC of the median swing AND its EMG peak is below
+ * END_CYCLE_WEAK_EMG_FRAC of the median. Fitted on 9 labelled sets (pick-ups
+ * 0.34-0.49x EMG, a put-down 0.69x EMG / 0.6x swing; real end reps >= 0.78x
+ * EMG). Needs END_CYCLE_MIN_COUNTED counted swings so the medians mean something.
+ */
+export const END_CYCLE_MAX_EMG_FRAC = 0.6;
+export const END_CYCLE_WEAK_SIZE_FRAC = 0.8;
+export const END_CYCLE_WEAK_EMG_FRAC = 0.72;
+export const END_CYCLE_MIN_COUNTED = 4;
+/** A strong first/last swing (>= this x median swing) is kept even if its EMG burst sits outside the +-0.6 s window. */
+export const END_CYCLE_MAX_SWING_FRAC = 0.9;
+
+/**
+ * Fragment rule: a split rep shows up as a small, weak swing sitting much
+ * closer to a neighbour than the set's typical rep spacing. Dropped when gap
+ * < FRAGMENT_MAX_GAP_FRAC x median gap AND swing < FRAGMENT_MAX_SWING_FRAC x
+ * median swing AND burst < FRAGMENT_MAX_EMG_FRAC x median burst.
+ */
+export const FRAGMENT_MAX_GAP_FRAC = 0.6;
+export const FRAGMENT_MAX_SWING_FRAC = 0.75;
+export const FRAGMENT_MAX_EMG_FRAC = 0.6;
+export const FRAGMENT_MIN_COUNTED = 4;
